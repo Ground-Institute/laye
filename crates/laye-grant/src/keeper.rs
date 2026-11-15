@@ -10,10 +10,10 @@ use crate::wire::{self, Kind, Narrow, Opens, State, Statement, Why, claim::Says,
 /// How far an Ask's time may be from the keeper's clock, in seconds.
 const IN_TIME: u64 = 300;
 
-/// An agent's record on one repository, as its keeper holds it.
-pub trait Record {
+/// A named agent's transcripts on one repository, as its keeper holds them.
+pub trait Transcripts {
     /// The bodies after a position, in order.
-    fn after(&self, agent: &str, about: &str, after: u64) -> Vec<Vec<u8>>;
+    fn after(&self, named_agent: &str, repo: &str, after: u64) -> Vec<Vec<u8>>;
 }
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -40,7 +40,7 @@ pub enum Answer {
     Served {
         served: Statement,
         bodies: Vec<Vec<u8>>,
-        /// Said when serving this pinned the grant.
+        /// Said when serving this narrowed the grant.
         stands: Option<Statement>,
     },
     Refused(Statement),
@@ -51,10 +51,10 @@ pub enum Answer {
 struct Held {
     grant: wire::Grant,
     state: State,
-    /// PINNED and SPENT: the agent it is pinned to, its hand, and the Served
-    /// that pinned it.
+    /// NARROWED and SPENT: the agent it is narrowed to, its authorization, and the Served
+    /// that narrowed it.
     agent: String,
-    hand: Option<Id>,
+    authorization: Option<Id>,
     served: Option<Id>,
 }
 
@@ -116,7 +116,7 @@ impl Keeper {
             grant: g,
             state: State::Given,
             agent: String::new(),
-            hand: None,
+            authorization: None,
             served: None,
         });
         Ok(said.id)
@@ -126,8 +126,8 @@ impl Keeper {
         self.grants.get(grant).map(|held| held.state)
     }
 
-    /// A Revoke, kept. A grant its giver revoked is REVOKED; a grant pinned
-    /// to a hand its person revoked is SPENT. The Stands is what changed.
+    /// A Revoke, kept. A grant its giver revoked is REVOKED; a grant narrowed
+    /// to an authorization its person revoked is SPENT. The Stands is what changed.
     pub fn revoke(&mut self, revoke: &Statement, now: u64) -> Result<Option<Statement>, HoldError> {
         let said = read(revoke)?;
         let Says::Revoke(r) = said.says else {
@@ -148,7 +148,7 @@ impl Keeper {
         self.revoked.insert(id, said.signer.clone());
         let spent = self.grants.iter_mut().find_map(|(grant, held)| {
             let theirs = person_of(&held.grant) == Some(said.signer.as_str());
-            if held.state == State::Pinned && held.hand == Some(id) && theirs {
+            if held.state == State::Narrowed && held.authorization == Some(id) && theirs {
                 held.state = State::Spent;
                 Some(*grant)
             } else {
@@ -162,13 +162,13 @@ impl Keeper {
     }
 
     /// An Ask, answered. `grant` is the Grant when it came with the Ask;
-    /// `hand` the Hand when one did.
+    /// `authorization` the Authorization when one did.
     pub fn ask(
         &mut self,
         ask: &Statement,
         grant: Option<&Statement>,
-        hand: Option<&Statement>,
-        record: &dyn Record,
+        authorization: Option<&Statement>,
+        transcripts: &dyn Transcripts,
         now: u64,
     ) -> Result<Answer, StatementError> {
         let Ok(said) = read(ask) else {
@@ -196,15 +196,15 @@ impl Keeper {
             }
         }
 
-        let hand_id = match self.check(&grant_id, &said.id, a, hand, now) {
-            Ok(hand_id) => hand_id,
+        let authorization_id = match self.check(&grant_id, &said.id, a, authorization, now) {
+            Ok(authorization_id) => authorization_id,
             Err(why) => return self.refuse(said.id, why, now),
         };
         let Some(held) = self.grants.get(&grant_id) else {
             return Ok(Answer::Silent);
         };
-        let bodies = if held.grant.opens() == Opens::Record {
-            record.after(&held.grant.of, &held.grant.about, a.after)
+        let bodies = if held.grant.opens() == Opens::Transcripts {
+            transcripts.after(&held.grant.named_agent, &held.grant.repo, a.after)
         } else {
             Vec::new()
         };
@@ -220,18 +220,21 @@ impl Keeper {
         )?;
         self.seen.insert(said.id);
 
-        let mut pinned = false;
+        let mut narrowed = false;
         if let Some(held) = self.grants.get_mut(&grant_id) {
             let to_a_person = person_of(&held.grant).is_some();
-            if held.state == State::Given && to_a_person && held.grant.narrow() == Narrow::First {
-                held.state = State::Pinned;
+            if held.state == State::Given
+                && to_a_person
+                && held.grant.narrow() == Narrow::ToThatAgent
+            {
+                held.state = State::Narrowed;
                 held.agent = a.reader.clone();
-                held.hand = hand_id;
+                held.authorization = authorization_id;
                 held.served = Some(id_of(&served));
-                pinned = true;
+                narrowed = true;
             }
         }
-        let stands = if pinned {
+        let stands = if narrowed {
             self.say_stands(&grant_id, now)?
         } else {
             None
@@ -244,14 +247,14 @@ impl Keeper {
     }
 
     /// What an Ask needs, in the contract's order. The first that does not
-    /// hold is the Why. Ok is the Hand it came with, when the grant is to a
+    /// hold is the Why. Ok is the Authorization it came with, when the grant is to a
     /// person.
     fn check(
         &mut self,
         grant_id: &Id,
         ask_id: &Id,
         a: &wire::Ask,
-        hand: Option<&Statement>,
+        authorization: Option<&Statement>,
         now: u64,
     ) -> Result<Option<Id>, Why> {
         let Some(held) = self.grants.get_mut(grant_id) else {
@@ -261,7 +264,7 @@ impl Keeper {
         if g.kind() != Kind::Read {
             return Err(Why::NotARead);
         }
-        if g.opens() == Opens::Unspecified || g.about.is_empty() {
+        if g.opens() == Opens::Unspecified || g.repo.is_empty() {
             return Err(Why::OpensNothing);
         }
         if held.state == State::Revoked {
@@ -276,31 +279,31 @@ impl Keeper {
         if held.state == State::Spent {
             return Err(Why::SpentGrant);
         }
-        if held.state == State::Pinned && held.agent != a.reader {
-            return Err(Why::PinnedToAnother);
+        if held.state == State::Narrowed && held.agent != a.reader {
+            return Err(Why::NarrowedToAnother);
         }
 
-        let hand_id = match &g.to {
+        let authorization_id = match &g.to {
             Some(To::Person(person)) => {
-                let Some(Ok(h_said)) = hand.map(read) else {
-                    return Err(Why::NotHanded);
+                let Some(Ok(h_said)) = authorization.map(read) else {
+                    return Err(Why::NotAuthorized);
                 };
-                let Says::Hand(h) = &h_said.says else {
-                    return Err(Why::NotHanded);
+                let Says::Authorization(h) = &h_said.says else {
+                    return Err(Why::NotAuthorized);
                 };
                 let names_this = as_id(&h.grant) == Some(*grant_id);
-                let asked_with = as_id(&a.hand) == Some(h_said.id);
+                let asked_with = as_id(&a.authorization) == Some(h_said.id);
                 if h_said.signer != *person || !names_this || !asked_with {
-                    return Err(Why::NotHanded);
+                    return Err(Why::NotAuthorized);
                 }
                 if self.revoked.get(&h_said.id) == Some(person) {
-                    return Err(Why::RevokedHand);
+                    return Err(Why::RevokedAuthorization);
                 }
                 if h.until != 0 && now >= h.until {
-                    if held.state == State::Pinned {
+                    if held.state == State::Narrowed {
                         held.state = State::Spent;
                     }
-                    return Err(Why::EndedHand);
+                    return Err(Why::EndedAuthorization);
                 }
                 if h.agent != a.reader {
                     return Err(Why::NotTheAgent);
@@ -322,7 +325,7 @@ impl Keeper {
         if now.abs_diff(a.issued_at) > IN_TIME {
             return Err(Why::OutOfTime);
         }
-        Ok(hand_id)
+        Ok(authorization_id)
     }
 
     fn refuse(&self, ask: Id, why: Why, now: u64) -> Result<Answer, StatementError> {

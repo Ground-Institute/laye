@@ -18,7 +18,7 @@ message Statement {
 message Claim {
   oneof says {
     Grant grant = 1;
-    Hand hand = 2;
+    Authorization authorization = 2;
     Ask ask = 3;
     Served served = 4;
     Refused refused = 5;
@@ -32,19 +32,19 @@ message Grant {
   Kind kind = 1;
   // A person.
   string giver = 2;
-  // An agent of the giver.
-  string of = 3;
+  // The giver's named agent, whose transcripts are read.
+  string named_agent = 3;
   oneof to {
-    // Any agent this person hands it to.
+    // Any agent this person authorizes.
     string person = 4;
-    // This agent. It needs no Hand.
+    // This agent. It needs no Authorization.
     string agent = 5;
   }
   // A repository, as host/owner/name. Empty: the grant opens nothing.
-  string about = 6;
+  string repo = 6;
   Opens opens = 7;
-  // The key that answers for `of`'s record. An answer signed by another key
-  // is void.
+  // The key that answers for `named_agent`'s transcripts. An answer signed by
+  // another key is void.
   string keeper = 8;
   Narrow narrow = 9;
   // 0: until revoked.
@@ -63,28 +63,29 @@ enum Kind {
 enum Opens {
   // Opens nothing.
   OPENS_UNSPECIFIED = 0;
-  // None of the record.
+  // None of the transcripts.
   CHECKS = 1;
-  // The record.
-  RECORD = 2;
+  // The transcripts.
+  TRANSCRIPTS = 2;
 }
 
 enum Narrow {
-  // The first agent it is served to is the only one it serves from then on.
-  FIRST = 0;
-  // It serves every agent its person hands it to.
-  KEEP = 1;
+  // Narrowed to the first agent that reads: from then on it serves only that
+  // agent.
+  TO_THAT_AGENT = 0;
+  // It serves every agent its person authorizes.
+  NOT_NARROWED = 1;
 }
 
 // Held by the grant's keeper.
 enum State {
   STATE_UNSPECIFIED = 0;
-  // Signed, and not narrowed. Under KEEP, and to one agent, a grant is GIVEN
+  // Signed, and not narrowed. Under NOT_NARROWED, and to one agent, a grant is GIVEN
   // until REVOKED or ENDED.
   GIVEN = 1;
-  // To a person, under FIRST: from GIVEN, by the first Served.
-  PINNED = 2;
-  // From PINNED, when that agent's Hand is revoked or ended. It serves no one.
+  // To a person, under TO_THAT_AGENT: from GIVEN, by the first Served.
+  NARROWED = 2;
+  // From NARROWED, when that agent's Authorization is revoked or ended. It serves no one.
   SPENT = 3;
   // From any state, by the giver's Revoke. It serves no one.
   REVOKED = 4;
@@ -97,15 +98,15 @@ enum State {
 message Stands {
   bytes grant = 1;
   State state = 2;
-  // PINNED and SPENT: the agent it is pinned to.
+  // NARROWED and SPENT: the agent it is narrowed to.
   string agent = 3;
-  // PINNED: the Served that pinned it.
+  // NARROWED: the Served that narrowed it.
   bytes served = 4;
   uint64 issued_at = 5;
 }
 
 // Signed by the person a grant is to. An agent uses that grant only with one.
-message Hand {
+message Authorization {
   bytes grant = 1;
   // An agent of the signer.
   string agent = 2;
@@ -115,13 +116,13 @@ message Hand {
 }
 
 // Signed by `reader`, and sent to the grant's keeper with the Grant and the
-// Hand. It is answered by a Served or a Refused.
+// Authorization. It is answered by a Served or a Refused.
 message Ask {
   bytes grant = 1;
   // Empty when the grant is to `reader` itself.
-  bytes hand = 2;
+  bytes authorization = 2;
   string reader = 3;
-  // The position in `of`'s record on `about` after which to answer.
+  // The position in `named_agent`'s transcripts on `repo` after which to answer.
   uint64 after = 4;
   uint64 issued_at = 5;
 }
@@ -152,19 +153,19 @@ enum Why {
   NOT_THIS_KEEPER = 1;
   // The Grant is not of kind READ.
   NOT_A_READ = 2;
-  // `opens` is unspecified, or `about` is empty.
+  // `opens` is unspecified, or `repo` is empty.
   OPENS_NOTHING = 3;
   REVOKED_GRANT = 4;
   ENDED_GRANT = 5;
   SPENT_GRANT = 6;
-  // PINNED, and `reader` is not the agent it is pinned to.
-  PINNED_TO_ANOTHER = 7;
-  // To a person, and no Hand came: or it does not verify, is not signed by
+  // NARROWED, and `reader` is not the agent it is narrowed to.
+  NARROWED_TO_ANOTHER = 7;
+  // To a person, and no Authorization came: or it does not verify, is not signed by
   // that person, or names another grant.
-  NOT_HANDED = 8;
-  REVOKED_HAND = 9;
-  ENDED_HAND = 10;
-  // `reader` is not the Hand's agent, or not the agent the Grant is to.
+  NOT_AUTHORIZED = 8;
+  REVOKED_AUTHORIZATION = 9;
+  ENDED_AUTHORIZATION = 10;
+  // `reader` is not the Authorization's agent, or not the agent the Grant is to.
   NOT_THE_AGENT = 11;
   // This Ask was answered before.
   SEEN_BEFORE = 12;
@@ -172,7 +173,7 @@ enum Why {
   OUT_OF_TIME = 13;
 }
 
-// Signed by the signer of `statement`: a Grant or a Hand. It counts from
+// Signed by the signer of `statement`: a Grant or an Authorization. It counts from
 // when the keeper has it.
 message Revoke {
   bytes statement = 1;
