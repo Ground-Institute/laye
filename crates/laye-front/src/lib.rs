@@ -196,6 +196,7 @@ fn as_laye(
         "/laye/login" if post => laye.login(body),
         "/auth/token" if post => laye.token(body),
         "/auth/introspect" if post => laye.introspect(body),
+        "/laye/roots" if post => laye.roots(body),
         _ => return None,
     };
     let mut resp = said(

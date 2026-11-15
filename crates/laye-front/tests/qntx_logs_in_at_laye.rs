@@ -298,6 +298,32 @@ async fn a_code_goes_only_to_the_node_that_holds_the_verifier() {
     assert_eq!(status, 400);
 }
 
+/// A node reads who administers the network from laye, signing as itself.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_node_reads_its_roots_from_laye() {
+    let root = laye_me::fresh();
+    let node = laye_me::fresh();
+    let at = laye("roots", &root, &node).await;
+    let asked = form(&[
+        ("client_id", &did(&node)),
+        ("client_assertion_type", ASSERTION),
+        ("client_assertion", &node_asserts(&node)),
+    ]);
+    let (status, said) = ask(at, "POST", "/laye/roots", asked).await;
+    assert_eq!(status, 200, "{said}");
+    let said: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert_eq!(said["root_identities"], serde_json::json!([did(&root)]));
+
+    let stranger = laye_me::fresh();
+    let asked = form(&[
+        ("client_id", &did(&stranger)),
+        ("client_assertion_type", ASSERTION),
+        ("client_assertion", &node_asserts(&stranger)),
+    ]);
+    let (status, _) = ask(at, "POST", "/laye/roots", asked).await;
+    assert_eq!(status, 401, "a key laye logs nobody in for is told nothing");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_node_laye_does_not_know_is_sent_nobody() {
     let root = laye_me::fresh();

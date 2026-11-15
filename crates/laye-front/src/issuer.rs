@@ -416,4 +416,14 @@ impl Laye<'_> {
             _ => json(200, serde_json::json!({ "active": false })),
         }
     }
+
+    /// Who administers the network, to a node laye logs people in for: the
+    /// node reads its roots from laye, not from its own am.toml.
+    pub(crate) fn roots(&self, body: &[u8]) -> Said {
+        let asked = form(&String::from_utf8_lossy(body));
+        if let Err(why) = self.node_asking(&asked) {
+            return refused(401, "invalid_client", why);
+        }
+        json(200, serde_json::json!({ "root_identities": self.roots }))
+    }
 }
