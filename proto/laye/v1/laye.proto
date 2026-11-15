@@ -24,8 +24,6 @@ message Claim {
     Refused refused = 5;
     Revoke revoke = 6;
     Stands stands = 7;
-    Entrust entrust = 8;
-    Check check = 9;
   }
 }
 
@@ -65,9 +63,9 @@ enum Kind {
 enum Opens {
   // Opens nothing.
   OPENS_UNSPECIFIED = 0;
-  // The Checks of `of`'s record, and none of the record.
+  // None of the record.
   CHECKS = 1;
-  // The record, and its Checks.
+  // The record.
   RECORD = 2;
 }
 
@@ -128,8 +126,7 @@ message Ask {
   uint64 issued_at = 5;
 }
 
-// Signed by the grant's keeper, to the reader and to the giver. Under CHECKS
-// no body is sent.
+// Signed by the grant's keeper, to the reader and to the giver.
 message Served {
   bytes ask = 1;
   uint64 after = 2;
@@ -175,46 +172,9 @@ enum Why {
   OUT_OF_TIME = 13;
 }
 
-// Signed by the signer of `statement`: a Grant, a Hand or an Entrust. It
-// counts from when the keeper has it.
+// Signed by the signer of `statement`: a Grant or a Hand. It counts from
+// when the keeper has it.
 message Revoke {
   bytes statement = 1;
   uint64 issued_at = 2;
-}
-
-// Signed by a person: `provider` may be shown the record of `agent`, an agent
-// of theirs, to check it.
-message Entrust {
-  string agent = 1;
-  string provider = 2;
-  // 0: until revoked.
-  uint64 until = 3;
-  uint64 issued_at = 4;
-}
-
-// Signed by a provider. It counts only beside the Entrust that names its
-// signer.
-message Check {
-  string agent = 1;
-  string about = 2;
-  // The stretch, as a Served names one.
-  uint64 after = 3;
-  uint64 upto = 4;
-  bytes digest = 5;
-  // The provider's name for how it checked, and its version.
-  string method = 6;
-  // What the method found, as the method writes it.
-  bytes finding = 7;
-  uint64 issued_at = 8;
-}
-
-// Travels on the topic laye/to/<did:key> of the key it is for.
-message Parcel {
-  // A Contents, in a sealed box to that key's ed25519 as X25519.
-  bytes sealed = 1;
-}
-
-message Contents {
-  repeated Statement statements = 1;
-  repeated bytes bodies = 2;
 }
