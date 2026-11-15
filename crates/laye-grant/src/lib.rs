@@ -8,7 +8,7 @@
         clippy::string_slice
     )
 )]
-//! The carve-out, running: a grant, handed to an agent, asked under, and
+//! The carve-out, running: a grant, an agent authorized under it, asked under, and
 //! answered by its keeper. The contract is proto/laye/v1/laye.proto.
 
 /// The contract's own types, built from it.
@@ -20,5 +20,5 @@ pub mod wire {
 mod keeper;
 mod statement;
 
-pub use keeper::{Answer, HoldError, Keeper, Record};
+pub use keeper::{Answer, HoldError, Keeper, Transcripts};
 pub use statement::{Id, Said, StatementError, did_of, digest, id_of, read, sign};
