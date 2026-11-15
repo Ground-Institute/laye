@@ -54,8 +54,9 @@ pub struct Config {
     pub qntx: String,
     /// QNTX's own did:key: what laye's signature is for.
     pub qntx_did: String,
-    /// The origin sessions sign for: https://api.q.sbvh.nl.
-    pub public_origin: String,
+    /// The origins sessions sign for: https://laye.ground.institute, and
+    /// whatever else hands requests to laye.
+    pub public_origins: Vec<String>,
     /// Where what was said while QNTX was down is kept.
     pub held_at: PathBuf,
 }
@@ -222,10 +223,14 @@ fn who_signed(inner: &Inner, token: &str) -> Result<String, String> {
             claims.iss, claims.sub
         ));
     }
-    if !claims.aud.contains(&inner.config.public_origin) {
+    let for_here = claims
+        .aud
+        .iter()
+        .any(|aud| inner.config.public_origins.contains(aud));
+    if !for_here {
         return Err(format!(
-            "the signature is for {:?}, and this is {}",
-            claims.aud, inner.config.public_origin
+            "the signature is for {:?}, and this is {:?}",
+            claims.aud, inner.config.public_origins
         ));
     }
     let now = now();

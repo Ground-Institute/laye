@@ -107,7 +107,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         qntx: format!("http://{qntx}"),
         qntx_did: QNTX_DID.into(),
-        public_origin: PUBLIC.into(),
+        public_origins: vec!["https://laye.example".into(), PUBLIC.into()],
         held_at,
     }
 }

@@ -12,7 +12,7 @@ struct File {
     listen: String,
     key: PathBuf,
     held: PathBuf,
-    public_origin: String,
+    public_origins: Vec<String>,
     qntx: Qntx,
 }
 
@@ -73,7 +73,11 @@ async fn main() {
             listen,
             qntx: file.qntx.origin.trim_end_matches('/').to_string(),
             qntx_did: file.qntx.did,
-            public_origin: file.public_origin.trim_end_matches('/').to_string(),
+            public_origins: file
+                .public_origins
+                .iter()
+                .map(|origin| origin.trim_end_matches('/').to_string())
+                .collect(),
             held_at: file.held,
         },
         key,
