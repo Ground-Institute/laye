@@ -1,0 +1,17 @@
+listen          = "127.0.0.1:8790"
+key             = "/var/lib/laye/key"
+held            = "/var/lib/laye/held.jsonl"
+invitations     = "/var/lib/laye/invitations.jsonl"
+public_origins  = ["https://laye.ground.institute", "https://api.q.sbvh.nl"]
+root_identities = ["did:key:z6Mk..."]
+binding_signers = []
+issuer          = "https://laye.ground.institute"
+ceremony        = "https://api.q.sbvh.nl"
+
+[qntx]
+origin = "http://127.0.0.1:8770"
+did    = "did:key:z6Mk..."
+
+[[nodes]]
+did  = "did:key:z6Mk..."
+back = "https://api.q.sbvh.nl/auth/elsewhere/back"

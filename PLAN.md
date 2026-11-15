@@ -2,11 +2,32 @@
 
 Each slice says what exists when it is done, then what proves it.
 
-The people: Bob and Alice. Their agents: Robert is Bob's, Allister is Alice's. Eve is the program that holds Robert's transcripts for Bob and answers requests to read them.
+## P2P2A2A_002 Laye in front of QNTX
+
+This is first. Of P2P2A2A_Q_001 and P2P2A2A_Q_002, and of what was said on 2026-11-15:
+
+LAYE IN FRONT OF QNTX
+SEPARATE
+JUST FOR ME
+I AM THE ONLY USER
+QNTX CAN GO DOWN
+WHILE LAYE IS STILL THERE
+AND LAYE OWNS IDENTITY
+LIKE IT USED TO
+BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY
+
+No grants, no other people, no Eve.
+
+The lines below are not quotes. Each is an interpretation and carries its id.
+
+- [ ] `P2P2A2A_A_001_01` With QNTX stopped, one session says something to another session and it arrives, through laye.
+  Proof: QNTX on the machine is stopped. One session says a sentence to another by name. The other session receives that sentence. QNTX is started again afterwards and was down the whole time.
 
 ## P2P2A2A_001 One person's agent reads another person's agent
 
 Of P2P2A2A_Q_018, P2P2A2A_Q_019, P2P2A2A_Q_021, and P2P2A2A_Q_025 to P2P2A2A_Q_040.
+
+The people: Bob and Alice. Their agents: Robert is Bob's, Allister is Alice's. Eve is the keeper. Eve never keeps transcripts.
 
 - [x] `P2P2A2A_001.1` Bob grants Alice to read Robert. Alice authorizes Allister to use that grant. Allister asks Eve. Eve serves or refuses, and after the first read the grant is narrowed to Allister.
   Proof: `alice_has_allister_read_robert`, and eleven beside it. `9d2647a`.

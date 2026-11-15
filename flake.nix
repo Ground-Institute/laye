@@ -22,6 +22,18 @@
           cargoTestFlags = [ "-p" "laye-peer" ];
           meta.mainProgram = "laye-peer";
         };
+        laye-front = pkgs.rustPlatform.buildRustPackage {
+          pname = "laye-front";
+          version = "0.0.0";
+          src = self;
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+            outputHashes."sacred-error-0.1.0" = "sha256-AFWB5DT1EjfHvjuODxri3Dw+vGYo/EAnTwF0xpJwSQQ=";
+          };
+          cargoBuildFlags = [ "-p" "laye-front" ];
+          cargoTestFlags = [ "-p" "laye-front" ];
+          meta.mainProgram = "laye-front";
+        };
         default = laye-peer;
       });
     };
