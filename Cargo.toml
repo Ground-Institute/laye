@@ -8,7 +8,10 @@ members = [
     "crates/laye-p2p",
     "crates/laye-peer",
     "crates/laye-protocol",
+    "crates/laye-scene",
 ]
+# The app builds on its own: Tauri, and the targets a phone is.
+exclude = ["app"]
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
@@ -29,3 +32,13 @@ string_slice = "deny"
 [workspace.dependencies]
 sacred-error = { git = "https://github.com/teranos/sacred-error", rev = "aaf9a743a2b9b0d22c6059dddbfdc4897f6528c7" }
 thiserror = "2"
+
+# The scene a phone downloads before it shows anything: small over fast.
+[profile.scene]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+debug = false
+panic = "abort"
