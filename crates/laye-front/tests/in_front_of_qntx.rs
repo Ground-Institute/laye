@@ -108,6 +108,8 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         qntx: format!("http://{qntx}"),
         qntx_did: QNTX_DID.into(),
         public_origins: vec!["https://laye.example".into(), PUBLIC.into()],
+        root_identities: Vec::new(),
+        binding_signers: Vec::new(),
         held_at,
     }
 }

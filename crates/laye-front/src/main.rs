@@ -13,6 +13,8 @@ struct File {
     key: PathBuf,
     held: PathBuf,
     public_origins: Vec<String>,
+    root_identities: Vec<String>,
+    binding_signers: Vec<String>,
     qntx: Qntx,
 }
 
@@ -79,6 +81,8 @@ async fn main() {
                 .map(|origin| origin.trim_end_matches('/').to_string())
                 .collect(),
             held_at: file.held,
+            root_identities: file.root_identities,
+            binding_signers: file.binding_signers,
         },
         key,
     )

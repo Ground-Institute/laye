@@ -11,6 +11,7 @@
 // "AND LAYE OWNS IDENTITY"
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
+pub mod door;
 pub mod jwt;
 
 use std::collections::HashMap;
@@ -59,6 +60,11 @@ pub struct Config {
     pub public_origins: Vec<String>,
     /// Where what was said while QNTX was down is kept.
     pub held_at: PathBuf,
+    /// Who administers the network: a did:key, or an account a trusted
+    /// signer bound to a key. Nobody else logs in through laye.
+    pub root_identities: Vec<String>,
+    /// Whose signature on a binding counts, as hex ed25519 keys.
+    pub binding_signers: Vec<String>,
 }
 
 pub struct Front {
@@ -180,6 +186,27 @@ async fn answer(inner: &Inner, req: Request<hyper::body::Incoming>) -> Response<
         .path_and_query()
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".into());
+
+    // laye decides who logs in. QNTX hears only of a login laye admitted.
+    if parts.method == hyper::Method::POST && parts.uri.path() == "/auth/laye/verify" {
+        let login: door::Login = match serde_json::from_slice(&body) {
+            Ok(login) => login,
+            Err(e) => {
+                return said(
+                    StatusCode::BAD_REQUEST,
+                    format!("the login does not read: {e}"),
+                );
+            }
+        };
+        if let Err(why) = door::admitted_as(
+            &login,
+            &inner.config.root_identities,
+            &inner.config.binding_signers,
+        ) {
+            return said(StatusCode::FORBIDDEN, why);
+        }
+    }
+
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
