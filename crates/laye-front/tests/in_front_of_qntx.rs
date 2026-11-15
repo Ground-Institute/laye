@@ -110,6 +110,8 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         public_origins: vec!["https://laye.example".into(), PUBLIC.into()],
         root_identities: Vec::new(),
         binding_signers: Vec::new(),
+        issuer: "https://laye.example".into(),
+        nodes: Vec::new(),
         held_at,
     }
 }

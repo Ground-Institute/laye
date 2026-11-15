@@ -15,6 +15,9 @@ struct File {
     public_origins: Vec<String>,
     root_identities: Vec<String>,
     binding_signers: Vec<String>,
+    issuer: String,
+    #[serde(default)]
+    nodes: Vec<laye_front::Node>,
     qntx: Qntx,
 }
 
@@ -83,6 +86,8 @@ async fn main() {
             held_at: file.held,
             root_identities: file.root_identities,
             binding_signers: file.binding_signers,
+            issuer: file.issuer.trim_end_matches('/').to_string(),
+            nodes: file.nodes,
         },
         key,
     )

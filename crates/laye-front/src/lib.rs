@@ -12,7 +12,10 @@
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
 pub mod door;
+mod issuer;
 pub mod jwt;
+
+pub use issuer::Node;
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -65,6 +68,10 @@ pub struct Config {
     pub root_identities: Vec<String>,
     /// Whose signature on a binding counts, as hex ed25519 keys.
     pub binding_signers: Vec<String>,
+    /// laye's own origin, where people log in: https://laye.ground.institute.
+    pub issuer: String,
+    /// The nodes whose people log in at laye.
+    pub nodes: Vec<Node>,
 }
 
 pub struct Front {
@@ -90,6 +97,7 @@ struct Inner {
     /// Signatures presented, by id, until they expire: each is spent once.
     seen: Mutex<HashMap<String, u64>>,
     held: Mutex<Vec<Held>>,
+    issued: issuer::Issued,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -114,6 +122,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
         client: Client::builder(TokioExecutor::new()).build_http(),
         seen: Mutex::new(HashMap::new()),
         held: Mutex::new(held),
+        issued: issuer::Issued::default(),
     });
     let run = tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETRY);
@@ -149,6 +158,56 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+/// What laye answers itself, at its own name: where people log in. Anything
+/// else, and every other name, goes on to QNTX.
+fn as_laye(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+    body: &[u8],
+) -> Option<Response<Full<Bytes>>> {
+    let host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default();
+    let ours = inner
+        .config
+        .issuer
+        .split_once("://")
+        .is_some_and(|(_, name)| name.trim_end_matches('/') == host);
+    if !ours {
+        return None;
+    }
+    let laye = issuer::Laye {
+        issuer: &inner.config.issuer,
+        did: &inner.did,
+        nodes: &inner.config.nodes,
+        roots: &inner.config.root_identities,
+        signers: &inner.config.binding_signers,
+        issued: &inner.issued,
+        now: now(),
+    };
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let (status, kind, text) = match parts.uri.path() {
+        "/.well-known/oauth-authorization-server" if get => laye.metadata(),
+        "/auth/authorize" if get => laye.authorize(parts.uri.query().unwrap_or_default()),
+        "/laye/challenge" if get => laye.challenge(),
+        "/laye/login" if post => laye.login(body),
+        "/auth/token" if post => laye.token(body),
+        "/auth/introspect" if post => laye.introspect(body),
+        _ => return None,
+    };
+    let mut resp = said(
+        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        text,
+    );
+    if let Ok(kind) = hyper::header::HeaderValue::from_str(kind) {
+        resp.headers_mut().insert(hyper::header::CONTENT_TYPE, kind);
+    }
+    Some(resp)
+}
+
 fn said(status: StatusCode, words: impl Into<String>) -> Response<Full<Bytes>> {
     let mut resp = Response::new(Full::new(Bytes::from(words.into())));
     *resp.status_mut() = status;
@@ -166,6 +225,10 @@ async fn answer(inner: &Inner, req: Request<hyper::body::Incoming>) -> Response<
             );
         }
     };
+
+    if let Some(answered) = as_laye(inner, &parts, &body) {
+        return answered;
+    }
 
     let presented = parts
         .headers

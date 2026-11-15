@@ -4,7 +4,12 @@ held            = "/var/lib/laye/held.jsonl"
 public_origins  = ["https://laye.ground.institute", "https://api.q.sbvh.nl"]
 root_identities = ["did:key:z6Mk..."]
 binding_signers = []
+issuer          = "https://laye.ground.institute"
 
 [qntx]
 origin = "http://127.0.0.1:8770"
 did    = "did:key:z6Mk..."
+
+[[nodes]]
+did  = "did:key:z6Mk..."
+back = "https://api.q.sbvh.nl/auth/elsewhere/back"

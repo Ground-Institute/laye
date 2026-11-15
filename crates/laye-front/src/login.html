@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>laye</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; }
+  main { max-width: 22rem; padding: 1rem; text-align: center; }
+  button { font: inherit; padding: .6rem 1.2rem; }
+  #said { min-height: 1.5em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>laye</h1>
+  <p id="said"></p>
+  <button id="in" type="button">Log in</button>
+</main>
+<script type="module">
+  const authorize = {{authorize}};
+  const said = (words) => { document.getElementById('said').textContent = words; };
+  document.getElementById('in').addEventListener('click', () => {
+    said('laye signs in this browser once its key is here.');
+  });
+  window.layeJourney = authorize;
+</script>
+</body>
+</html>
