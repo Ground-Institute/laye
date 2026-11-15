@@ -1,0 +1,209 @@
+syntax = "proto3";
+
+package laye.v1;
+
+// The carve-out. One person lets another person read one of their agents; the
+// other hands that to one agent of their own; the agent reads. Every link is
+// a signature, and whoever holds the links can check them. No registry, no
+// network and no name is needed for any of it.
+//
+// Qn is the n-th of the owner's words: QUOTES.md in
+// Ground-Institute/laye.ground.institute. Nothing here repeats them.
+//
+// A key is named by its did:key. A person is a key that signs only when its
+// human does. An agent is a key one session holds. A hash is sha256. A time
+// is unix seconds. A field named for a statement holds that statement's id.
+
+// What one key says, as it was signed. The signature is ed25519 over
+// "laye-claim/v1|" followed by `claim`, the bytes as they are carried:
+// nothing is encoded again to verify.
+message Statement {
+  // A serialized Claim. Its sha256 is the statement's id.
+  bytes claim = 1;
+  bytes signature = 2;
+  string signer = 3;
+}
+
+message Claim {
+  oneof says {
+    Grant grant = 1;
+    Hand hand = 2;
+    Ask ask = 3;
+    Served served = 4;
+    Refused refused = 5;
+    Revoke revoke = 6;
+    Stands stands = 7;
+  }
+}
+
+// Q5 Q29 Q30 Q38
+//
+// Signed by `giver`: `of` is my agent, and `to` may read what it did on
+// `about`, by asking `keeper`.
+//
+// The grant introduces the agent. Whoever it is given to learns `of` from the
+// giver's own signature, and needs no one else's word for whose it is.
+message Grant {
+  Kind kind = 1;
+  string giver = 2;
+  string of = 3;
+  oneof to {
+    // Q38 Q40. Any agent this person hands it to.
+    string person = 4;
+    // Q37 Q38. This agent, and no hand.
+    string agent = 5;
+  }
+  // Q5. The work it opens: a repository, as host/owner/name. A grant about
+  // nothing opens nothing.
+  string about = 6;
+  // The key that answers for `of`'s record. An answer signed by another key
+  // is no answer.
+  string keeper = 7;
+  Narrow narrow = 8;
+  // 0: until revoked.
+  uint64 until = 9;
+  uint64 issued_at = 10;
+}
+
+// Q32 Q33
+enum Kind {
+  // A grant of no kind grants nothing.
+  KIND_UNSPECIFIED = 0;
+  READ = 1;
+  // Speaking is a grant of its own, and is not this one.
+  reserved 2;
+}
+
+// Q39
+enum Narrow {
+  // What a grant says when it says nothing: the first agent it is served to
+  // is the only one it serves from then on.
+  FIRST = 0;
+  // It serves every agent its person hands it to.
+  KEEP = 1;
+}
+
+// The complete state of a grant. Its keeper holds it, and says it.
+enum State {
+  STATE_UNSPECIFIED = 0;
+  // Signed, and not yet narrowed. Under KEEP, and when it is to one agent,
+  // a grant is GIVEN until it is REVOKED or ENDED.
+  GIVEN = 1;
+  // To a person, under FIRST, and served once. From GIVEN, by the first
+  // Served.
+  PINNED = 2;
+  // PINNED, and that agent's hand is revoked or ended. It serves no one, and
+  // no other hand revives it: the giver gives again, or does not.
+  SPENT = 3;
+  // The giver revoked it. From any state.
+  REVOKED = 4;
+  // `until` has passed. From any state.
+  ENDED = 5;
+}
+
+// Signed by the grant's keeper, to its giver and to whom it was given, each
+// time the state changes. Both hold the keeper's word for what the grant is
+// now, and neither works it out alone.
+message Stands {
+  bytes grant = 1;
+  State state = 2;
+  // PINNED and SPENT: the agent it is pinned to.
+  string agent = 3;
+  // PINNED: the Served that pinned it.
+  bytes served = 4;
+  uint64 issued_at = 5;
+}
+
+// Q36 Q40
+//
+// Signed by the person a grant is to: this agent of mine may use it. The
+// giver never names the agent. The person does, once for each grant, and no
+// agent of theirs uses a grant it was not handed.
+message Hand {
+  bytes grant = 1;
+  string agent = 2;
+  // 0: until revoked, or until the grant is no more.
+  uint64 until = 3;
+  uint64 issued_at = 4;
+}
+
+// Q19 Q28
+//
+// Signed by `reader`, and sent to the grant's keeper together with the Grant
+// and the Hand. It is served, or it is refused with the Why that failed.
+message Ask {
+  bytes grant = 1;
+  // Empty when the grant is to `reader` itself.
+  bytes hand = 2;
+  string reader = 3;
+  // The position in `of`'s record on `about` after which to read.
+  uint64 after = 4;
+  uint64 issued_at = 5;
+}
+
+// Q39
+//
+// Signed by the grant's keeper, to the reader and to the giver: this is what
+// was sent for that Ask.
+message Served {
+  bytes ask = 1;
+  uint64 after = 2;
+  uint64 upto = 3;
+  // The hash of the Contents' bodies as they were sealed to the reader.
+  bytes digest = 4;
+  uint64 issued_at = 5;
+}
+
+// Signed by the grant's keeper, to the reader: the Ask was not served.
+message Refused {
+  bytes ask = 1;
+  Why why = 2;
+  uint64 issued_at = 3;
+}
+
+// Each is one thing an Ask needs. The first that does not hold is the Why.
+// An Ask or a Grant whose signature does not verify gets no answer.
+enum Why {
+  WHY_UNSPECIFIED = 0;
+  // The Grant names another keeper.
+  NOT_THIS_KEEPER = 1;
+  // The Grant is not of kind READ.
+  NOT_A_READ = 2;
+  REVOKED_GRANT = 3;
+  ENDED_GRANT = 4;
+  SPENT_GRANT = 5;
+  // PINNED, and `reader` is not the agent it is pinned to.
+  PINNED_TO_ANOTHER = 6;
+  // To a person, and no Hand came: or it does not verify, is not signed by
+  // that person, or names another grant.
+  NOT_HANDED = 7;
+  REVOKED_HAND = 8;
+  ENDED_HAND = 9;
+  // `reader` is not the Hand's agent, or not the agent the Grant is to.
+  NOT_THE_AGENT = 10;
+  // This Ask was answered before.
+  SEEN_BEFORE = 11;
+  // `issued_at` is more than five minutes from the keeper's clock.
+  OUT_OF_TIME = 12;
+}
+
+// Q31
+//
+// Signed by whoever signed `statement`: a Grant by its giver, a Hand by its
+// person. It counts from when the keeper has it.
+message Revoke {
+  bytes statement = 1;
+  uint64 issued_at = 2;
+}
+
+// What travels to one key, on the topic laye/to/<did:key>: a Contents, in a
+// sealed box to that key's ed25519 as X25519. Who carries it learns the key
+// it is for and the key that sent it, and nothing of what is in it.
+message Parcel {
+  bytes sealed = 1;
+}
+
+message Contents {
+  repeated Statement statements = 1;
+  repeated bytes bodies = 2;
+}
