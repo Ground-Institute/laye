@@ -48,10 +48,13 @@ origins = ["https://laye.ground.institute", "laye://door"]
 Both apps could use the following from one place:
 
 - `sheet/`, which is the same code in both apps.
-- The TestFlight pipeline: `ci/testflight.nix`, `.github/scripts/ios-project.py`
-  (signing against a profile instead of an account) and
-  `.github/scripts/delivered.py` (a build counts as delivered once App Store
-  Connect says testers can install it).
+- The generic steps of QNTX-App's TestFlight pipeline (`ci/testflight.nix`):
+  - signing against a profile instead of an account (`.github/scripts/ios-project.py`, minus its island);
+  - uploading with `xcrun altool --upload-package`, which names the app by `APPLE_APP_ID`;
+  - waiting until App Store Connect says testers can install the build (`.github/scripts/delivered.py`).
+
+  Its other steps are QNTX's own: checking out QNTX and QNTX-Web, taking the
+  version from QNTX's newest tag, and the island and share extensions.
 
 ## Apple
 
