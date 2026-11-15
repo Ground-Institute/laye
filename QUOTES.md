@@ -263,3 +263,129 @@
 ###### Q61
 
 "they keep their own transcripts, and the grant is p2p, and a third party (like QNTX-Quotes) can give additional checks (which you pay for),"
+
+## What to know of an agent
+
+###### Q62
+
+"I think you should care about two things in addition to the floor, which is"
+
+###### Q63
+
+"Did it fulfill outcome in a way you see yourself being okay with?"
+
+###### Q64
+
+"at what cost."
+
+###### Q65
+
+"if the agent needs to be saved each time,"
+
+###### Q66
+
+"personally i would trust it less"
+
+###### Q67
+
+"someone else may be fine with that because it's just how someone might be operating for real, and the outcome is more in line with thoughts and idea's the steerer was holding."
+
+###### Q68
+
+"it stops until i am back or when my subscription comes back."
+
+###### Q69
+
+"or it get's forgotten."
+
+###### Q70
+
+"but that's changing now since Agent's have a stable name in my ops, I'm actually going to be able to resurrect them directly from my obsidian as sessions i still have access and observability into."
+
+###### Q71
+
+"unless it's waiting for a collection to be released"
+
+###### Q72
+
+"i actually think the Claude Ultra account can be administered better if there are more human minds looking at it."
+
+###### Q73
+
+"i dont mind giving away my own usage, even for bigger more expensive models, if it means a real human got to give feedback and insights i could not possibly have had."
+
+###### Q74
+
+"I would want them to look at one curated Agent, and all the Agent's it knows to access and read from and speak to. and how available it is."
+
+###### Q75
+
+"The Node Agent and Namespace Agents, and how pii can't get into our ops."
+
+###### Q76
+
+"you dont know which agent you want to show specifically, but you know which collection of Agents"
+
+###### Q77
+
+"and they also dont know your Agents, but you could have a router service or a real agent, be the one who 'knows' all your other agents that you want to be know about (to different degrees of findability)"
+
+## Consequentiality
+
+###### Q78
+
+"How reliably consequenced is this free-language addressable entity given similarly distanced waking collections on undirected release?"
+
+###### Q79
+
+"Say that a collection contains a PR comment"
+
+###### Q80
+
+"On an addressed Agent’s next turn, did it get consequenced into producing any kind of durable artifact? Did it do it the next turn? Did it ever produce any durable artifact? What kind? Do things get dropped? How often? Are there categories of types of dropped collection items that you should consider when deciding to make communication a settled choice? Is there a baseline of Agent activity that needs to be upheld for how long it takes or how many turns it takes to produce a durable artifact?"
+
+###### Q81
+
+"If that artifact was a comment on a PR, What was it’s consequence? None? Sometimes after a while? Another PR?"
+
+###### Q82
+
+"If that artifact was a PR, what was it’s consequence? None? Comments? ci passed? Did it land? Did it change after landing? How much?"
+
+###### Q83
+
+"Is the consequence that it became (too) foundational?"
+
+###### Q84
+
+"The consequence can involve issues and/or errors in sentry, PagerDuty waking three California salaried SRE’s."
+
+###### Q85
+
+"Say we trace measures of health, did bug reports trigger during consecutive ‘/goal’ halting?"
+
+## Whose words are shown
+
+###### Q86
+
+"I don’t think I would want to show people my emotional labour (ALL CAPS SPEC-LIKE SCREAMING)"
+
+###### Q87
+
+"And I think other a2a operators also consider their quoted prompts as personally private data, regardless of whether they think it now. They would and should think about it the moment they tether their words into a private company IT and their operations and trust."
+
+## Finding agents
+
+###### Q88
+
+"In terms of discoverability and registry, QNTX already has an answer for that and it’s called OASF"
+
+###### Q89
+
+"collected.go tags its endpoints ai_ml_engineering/agent_orchestration/multi_agent_coordination, which classifies the capability in OASF's taxonomy so other agents can discover it."
+
+## And mine
+
+###### Q90
+
+"I SAY MY EMOTIONAL LABOR CAN BE ACCESIBLE TO ANYONE, I DONT CARE"
