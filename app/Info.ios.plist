@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Export compliance, answered in the bundle, as QNTX-App does: without
+         it a build sits in App Store Connect unanswered and reaches nobody. -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <!-- laye:// from Safari: a node's login page hands its journey to the app. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>institute.ground.laye</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>laye</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>
