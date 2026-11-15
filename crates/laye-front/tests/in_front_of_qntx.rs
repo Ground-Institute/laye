@@ -112,6 +112,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         binding_signers: Vec::new(),
         issuer: "https://laye.example".into(),
         nodes: Vec::new(),
+        invitations_at: held_at.with_file_name("invitations.jsonl"),
         held_at,
     }
 }

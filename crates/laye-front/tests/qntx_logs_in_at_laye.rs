@@ -50,6 +50,7 @@ async fn laye(name: &str, root: &laye_me::Keypair, node: &laye_me::Keypair) -> S
             qntx_did: did(node),
             public_origins: vec![ISSUER.into()],
             held_at: held_at(name),
+            invitations_at: held_at(name).with_file_name("invitations.jsonl"),
             root_identities: vec![did(root)],
             binding_signers: Vec::new(),
             issuer: ISSUER.into(),
@@ -251,6 +252,7 @@ async fn qntx_sends_a_root_to_laye_and_laye_says_who_they_are() {
     assert_eq!(said["iss"], ISSUER);
     assert_eq!(said["sub"], did(&root));
     assert_eq!(said["client_id"], did(&node));
+    assert_eq!(said["level"], "ROOT", "QNTX's level, as QNTX spells it");
 
     // A code is spent once.
     let (again, _) = ask(

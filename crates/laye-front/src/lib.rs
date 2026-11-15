@@ -12,6 +12,7 @@
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
 pub mod door;
+pub mod invitations;
 mod issuer;
 pub mod jwt;
 
@@ -72,6 +73,8 @@ pub struct Config {
     pub issuer: String,
     /// The nodes whose people log in at laye.
     pub nodes: Vec<Node>,
+    /// Where the invitations a root made are kept.
+    pub invitations_at: PathBuf,
 }
 
 pub struct Front {
@@ -98,6 +101,7 @@ struct Inner {
     seen: Mutex<HashMap<String, u64>>,
     held: Mutex<Vec<Held>>,
     issued: issuer::Issued,
+    invitations: invitations::Invitations,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -105,6 +109,9 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     let did = laye_peer::did_of(&key)
         .ok_or_else(|| laye_peer::error("key", "laye's key is not an ed25519 key", ""))?;
     let held = load(&config.held_at)?;
+    let invited = invitations::Invitations::load(&config.invitations_at).map_err(|why| {
+        laye_peer::error("invitations", "the invitations laye keeps do not read", why)
+    })?;
     let listener = TcpListener::bind(config.listen).await.map_err(|e| {
         laye_peer::error(
             "listen",
@@ -123,6 +130,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
         seen: Mutex::new(HashMap::new()),
         held: Mutex::new(held),
         issued: issuer::Issued::default(),
+        invitations: invited,
     });
     let run = tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETRY);
@@ -185,6 +193,7 @@ fn as_laye(
         roots: &inner.config.root_identities,
         signers: &inner.config.binding_signers,
         issued: &inner.issued,
+        invitations: &inner.invitations,
         now: now(),
     };
     let get = parts.method == hyper::Method::GET;
@@ -197,6 +206,18 @@ fn as_laye(
         "/auth/token" if post => laye.token(body),
         "/auth/introspect" if post => laye.introspect(body),
         "/laye/roots" if post => laye.roots(body),
+        "/laye/invitations" | "/laye/invitations/withdraw" => {
+            let signer = match signer_of(inner, parts) {
+                Ok(signer) => signer,
+                Err(why) => return Some(said(StatusCode::UNAUTHORIZED, why)),
+            };
+            match (parts.uri.path(), get, post) {
+                ("/laye/invitations", true, _) => laye.invitations(signer.as_deref()),
+                ("/laye/invitations", _, true) => laye.invite(signer.as_deref(), body),
+                ("/laye/invitations/withdraw", _, true) => laye.withdraw(signer.as_deref(), body),
+                _ => return None,
+            }
+        }
         _ => return None,
     };
     let mut resp = said(
@@ -207,6 +228,20 @@ fn as_laye(
         resp.headers_mut().insert(hyper::header::CONTENT_TYPE, kind);
     }
     Some(resp)
+}
+
+/// The key a request is signed by, when it carries a signature: checked as a
+/// session's is. None is a request that carries none.
+fn signer_of(inner: &Inner, parts: &hyper::http::request::Parts) -> Result<Option<String>, String> {
+    match parts
+        .headers
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix(SIGNED))
+    {
+        Some(token) => who_signed(inner, token.trim()).map(Some),
+        None => Ok(None),
+    }
 }
 
 fn said(status: StatusCode, words: impl Into<String>) -> Response<Full<Bytes>> {

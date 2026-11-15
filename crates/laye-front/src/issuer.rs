@@ -13,6 +13,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use crate::invitations::{Account, Invitations};
 use crate::{door, jwt};
 
 /// A node that logs its people in at laye: its did:key, and where they are
@@ -36,6 +37,7 @@ struct Code {
     back: String,
     challenge: String,
     identity: String,
+    level: &'static str,
     did: String,
     until: u64,
 }
@@ -43,9 +45,14 @@ struct Code {
 struct Token {
     node: String,
     identity: String,
+    level: &'static str,
     did: String,
     until: u64,
 }
+
+/// QNTX's levels (internal/access): a root, or somebody a root invited.
+const ROOT: &str = "ROOT";
+const USER: &str = "USER";
 
 #[derive(Default)]
 pub(crate) struct Issued {
@@ -137,6 +144,7 @@ pub(crate) struct Laye<'a> {
     pub roots: &'a [String],
     pub signers: &'a [String],
     pub issued: &'a Issued,
+    pub invitations: &'a Invitations,
     pub now: u64,
 }
 
@@ -239,8 +247,8 @@ impl Laye<'_> {
                 "laye issued no such challenge, or it is spent",
             );
         }
-        let identity = match door::admitted_as(&presented, self.roots, self.signers) {
-            Ok(identity) => identity,
+        let (identity, level) = match self.who_logs_in(&presented) {
+            Ok(admitted) => admitted,
             Err(why) => return refused(403, "access_denied", why),
         };
         let asked = form(&journey.authorize);
@@ -260,6 +268,7 @@ impl Laye<'_> {
                     back: node.back.clone(),
                     challenge: asked.get("code_challenge").cloned().unwrap_or_default(),
                     identity,
+                    level,
                     did: presented.did,
                     until: self.now + CODE_LIFE,
                 },
@@ -376,6 +385,7 @@ impl Laye<'_> {
                 Token {
                     node,
                     identity: held.identity,
+                    level: held.level,
                     did: held.did,
                     until: self.now + TOKEN_LIFE,
                 },
@@ -400,21 +410,124 @@ impl Laye<'_> {
         let token = asked.get("token").map(String::as_str).unwrap_or_default();
         let tokens = self.issued.tokens.lock().unwrap_or_else(|p| p.into_inner());
         match tokens.get(&hash(token)) {
-            Some(held) if held.until > self.now && held.node == node => json(
-                200,
-                serde_json::json!({
-                    "active": true,
-                    "iss": self.issuer,
-                    "sub": held.identity,
-                    "client_id": held.node,
-                    "token_type": "bearer",
-                    "level": "root",
-                    "did": held.did,
-                    "label": "laye",
-                }),
-            ),
+            Some(held) if held.until > self.now && held.node == node && self.still_in(held) => {
+                json(
+                    200,
+                    serde_json::json!({
+                        "active": true,
+                        "iss": self.issuer,
+                        "sub": held.identity,
+                        "client_id": held.node,
+                        "token_type": "bearer",
+                        "level": held.level,
+                        "did": held.did,
+                        "label": "laye",
+                    }),
+                )
+            }
             _ => json(200, serde_json::json!({ "active": false })),
         }
+    }
+
+    /// Who a login is: a root, or the account an invitation lets in.
+    fn who_logs_in(&self, presented: &door::Login) -> Result<(String, &'static str), String> {
+        if let Ok(root) = door::admitted_as(presented, self.roots, self.signers) {
+            return Ok((root, ROOT));
+        }
+        let vouched = door::vouched(presented, self.signers)?;
+        match self.invitations.admit(&vouched)? {
+            Some(account) => Ok((account, USER)),
+            None => Err("nothing presented is a root, or an account a root invited".into()),
+        }
+    }
+
+    /// A token stands only while who it is still is: a root still listed, or
+    /// an invited account not kicked.
+    fn still_in(&self, held: &Token) -> bool {
+        if held.level == ROOT {
+            return self.roots.contains(&held.identity);
+        }
+        self.invitations.list().iter().any(|inv| {
+            inv.state() == "accepted" && inv.accepted_by.as_deref() == Some(held.identity.as_str())
+        })
+    }
+
+    /// A root's request about invitations: the signer is a root's own key.
+    fn root_asking(&self, signer: Option<&str>) -> Result<String, Said> {
+        match signer {
+            Some(did) if self.roots.iter().any(|r| r == did) => Ok(did.to_string()),
+            Some(did) => Err(refused(
+                403,
+                "access_denied",
+                format!("{did} is not a root, and only a root invites"),
+            )),
+            None => Err(refused(
+                401,
+                "invalid_request",
+                "a root signs what it asks of invitations",
+            )),
+        }
+    }
+
+    /// A root invites: the accounts the invited person may sign in with.
+    pub(crate) fn invite(&self, signer: Option<&str>, body: &[u8]) -> Said {
+        let root = match self.root_asking(signer) {
+            Ok(root) => root,
+            Err(said) => return said,
+        };
+        #[derive(Deserialize)]
+        struct Asked {
+            accounts: Vec<Account>,
+        }
+        let Ok(asked) = serde_json::from_slice::<Asked>(body) else {
+            return refused(
+                400,
+                "invalid_request",
+                "an invitation is {\"accounts\": [{\"provider\", \"account\"}]}",
+            );
+        };
+        match self.invitations.invite(&root, asked.accounts, self.now) {
+            Ok(inv) => json(200, serde_json::json!(inv)),
+            Err(why) => refused(400, "invalid_request", why),
+        }
+    }
+
+    /// A root cancels an invitation, or kicks the one it let in.
+    pub(crate) fn withdraw(&self, signer: Option<&str>, body: &[u8]) -> Said {
+        if let Err(said) = self.root_asking(signer) {
+            return said;
+        }
+        #[derive(Deserialize)]
+        struct Asked {
+            id: String,
+        }
+        let Ok(asked) = serde_json::from_slice::<Asked>(body) else {
+            return refused(400, "invalid_request", "a withdrawal is {\"id\"}");
+        };
+        match self.invitations.withdraw(&asked.id, self.now) {
+            Ok(inv) => json(200, serde_json::json!(inv)),
+            Err(why) => refused(400, "invalid_request", why),
+        }
+    }
+
+    /// Every invitation, to a root.
+    pub(crate) fn invitations(&self, signer: Option<&str>) -> Said {
+        if let Err(said) = self.root_asking(signer) {
+            return said;
+        }
+        let all: Vec<serde_json::Value> = self
+            .invitations
+            .list()
+            .iter()
+            .map(|inv| {
+                let mut v = serde_json::json!(inv);
+                if let Some(fields) = v.as_object_mut() {
+                    fields.insert("state".into(), serde_json::json!(inv.state()));
+                }
+                v
+            })
+            .collect();
+        json(200, serde_json::json!({ "invitations": all }))
     }
 
     /// Who administers the network, to a node laye logs people in for: the

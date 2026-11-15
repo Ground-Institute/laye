@@ -23,9 +23,9 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The root identity a login reaches: the key itself, or an account a trusted
-/// signer bound to it. Else why not.
-pub fn admitted_as(login: &Login, roots: &[String], signers: &[String]) -> Result<String, String> {
+/// The bindings a login proves: its signature over the challenge is its key's,
+/// and each binding is about that key and made by a signer laye trusts.
+pub fn vouched<'a>(login: &'a Login, signers: &[String]) -> Result<Vec<&'a SignedBinding>, String> {
     let key = laye_me::didkey::decode(&login.did)
         .map_err(|e| format!("{} is not a did:key: {e}", login.did))?;
     let public = libp2p_identity::ed25519::PublicKey::try_from_bytes(&key)
@@ -39,19 +39,27 @@ pub fn admitted_as(login: &Login, roots: &[String], signers: &[String]) -> Resul
             login.did
         ));
     }
+    Ok(login
+        .bindings
+        .iter()
+        .filter(|b| {
+            b.claim.peer_pubkey == key
+                && signers.contains(&hex(&b.signer_pubkey))
+                && b.verify().is_ok()
+        })
+        .collect())
+}
+
+/// The root identity a login reaches: the key itself, or an account a trusted
+/// signer bound to it. Else why not.
+pub fn admitted_as(login: &Login, roots: &[String], signers: &[String]) -> Result<String, String> {
+    let vouched = vouched(login, signers)?;
     if roots.contains(&login.did) {
         return Ok(login.did.clone());
     }
-    for binding in &login.bindings {
-        let about_this_key = binding.claim.peer_pubkey == key;
-        let trusted = signers.contains(&hex(&binding.signer_pubkey));
-        if about_this_key
-            && trusted
-            && binding.verify().is_ok()
-            && roots.contains(&binding.claim.canonical_id)
-        {
-            return Ok(binding.claim.canonical_id.clone());
-        }
-    }
-    Err("nothing presented is one of laye's root identities".into())
+    vouched
+        .iter()
+        .find(|b| roots.contains(&b.claim.canonical_id))
+        .map(|b| b.claim.canonical_id.clone())
+        .ok_or_else(|| "nothing presented is one of laye's root identities".into())
 }
