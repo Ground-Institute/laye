@@ -75,6 +75,9 @@ pub struct Config {
     pub nodes: Vec<Node>,
     /// Where the invitations a root made are kept.
     pub invitations_at: PathBuf,
+    /// Where an account proves itself, for laye's login screen: the origin
+    /// of the provider ceremony, https://api.q.sbvh.nl.
+    pub ceremony_at: String,
 }
 
 pub struct Front {
@@ -195,6 +198,7 @@ fn as_laye(
         signers: &inner.config.binding_signers,
         issued: &inner.issued,
         invitations: &inner.invitations,
+        ceremony: &inner.config.ceremony_at,
         now: now(),
     };
     let get = parts.method == hyper::Method::GET;
@@ -203,6 +207,7 @@ fn as_laye(
         "/.well-known/oauth-authorization-server" if get => laye.metadata(),
         "/auth/authorize" if get => laye.authorize(parts.uri.query().unwrap_or_default()),
         "/laye/challenge" if get => laye.challenge(),
+        "/laye/back" if get => laye.back(),
         "/laye/login" if post => laye.login(body),
         "/auth/token" if post => laye.token(body),
         "/auth/introspect" if post => laye.introspect(body),

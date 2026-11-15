@@ -145,6 +145,8 @@ pub(crate) struct Laye<'a> {
     pub signers: &'a [String],
     pub issued: &'a Issued,
     pub invitations: &'a Invitations,
+    /// Where an account proves itself: the provider ceremony's origin.
+    pub ceremony: &'a str,
     pub now: u64,
 }
 
@@ -201,10 +203,25 @@ impl Laye<'_> {
         if !s256 || !has_challenge {
             return refused(400, "invalid_request", "laye takes a code challenge, S256");
         }
-        let page = include_str!("login.html").replace(
-            "{{authorize}}",
-            &serde_json::to_string(query).unwrap_or_default(),
-        );
+        self.page(Some(query))
+    }
+
+    /// Where the provider ceremony sends somebody back to: the same screen,
+    /// with the journey the browser kept.
+    pub(crate) fn back(&self) -> Said {
+        self.page(None)
+    }
+
+    fn page(&self, journey: Option<&str>) -> Said {
+        let page = include_str!("login.html")
+            .replace(
+                "{{authorize}}",
+                &serde_json::to_string(&journey).unwrap_or_default(),
+            )
+            .replace(
+                "{{ceremony}}",
+                &serde_json::to_string(self.ceremony).unwrap_or_default(),
+            );
         (200, "text/html; charset=utf-8", page)
     }
 

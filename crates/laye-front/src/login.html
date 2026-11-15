@@ -5,26 +5,179 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>laye</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; display: grid; place-items: center; min-height: 100vh; margin: 0; }
-  main { max-width: 22rem; padding: 1rem; text-align: center; }
-  button { font: inherit; padding: .6rem 1.2rem; }
-  #said { min-height: 1.5em; }
+  /* laye's look, as it was in teranos/laye's bevy-starter. */
+  :root {
+    color-scheme: dark;
+    --ground: #050608;
+    --ink: #ddd;
+    --panel: rgba(20, 22, 28, 0.85);
+    --edge: #333;
+    --press: #2a1212;
+    --press-hover: #3a1818;
+    --press-ink: #f88;
+    --press-edge: #642;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    padding: 0 16px;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse at 50% 30%, #0b1020 0%, var(--ground) 60%);
+    color: var(--ink);
+    font: 14px ui-monospace, Menlo, monospace;
+  }
+  main {
+    width: 100%;
+    max-width: 22rem;
+    padding: 1.5em 1.2em;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    backdrop-filter: blur(4px);
+    text-align: center;
+  }
+  h1 {
+    margin: 0 0 0.5em;
+    font-weight: 400;
+    letter-spacing: 0.4em;
+    text-shadow: 0 0 12px rgba(255, 136, 136, 0.55);
+  }
+  #providers { display: grid; gap: 0.75em; margin: 1.5em 0 1em; }
+  button {
+    padding: 0.6em 1em;
+    background: var(--press);
+    color: var(--press-ink);
+    border: 1px solid var(--press-edge);
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: var(--press-hover); }
+  #said { min-height: 1.5em; margin: 0; }
+  .bad { color: var(--press-ink); }
 </style>
 </head>
 <body>
 <main>
   <h1>laye</h1>
+  <div id="providers"></div>
   <p id="said"></p>
-  <button id="in" type="button">Log in</button>
 </main>
 <script type="module">
-  const authorize = {{authorize}};
-  const said = (words) => { document.getElementById('said').textContent = words; };
-  document.getElementById('in').addEventListener('click', () => {
-    said('laye signs in this browser once its key is here.');
+// "the lgin screen, you would be seeing laye"
+// This browser's key is made here and kept here: it never leaves the tab.
+// An account proves itself through the ceremony at CEREMONY, which returns
+// to this page with a ticket; laye decides who that is.
+const JOURNEY = {{authorize}};
+const CEREMONY = {{ceremony}};
+const said = (words, bad) => {
+  const p = document.getElementById('said');
+  p.textContent = words;
+  p.className = bad ? 'bad' : '';
+};
+
+if (JOURNEY) sessionStorage.setItem('laye.journey', JOURNEY);
+const journey = sessionStorage.getItem('laye.journey');
+
+function store() {
+  return new Promise((ok, no) => {
+    const open = indexedDB.open('laye', 1);
+    open.onupgradeneeded = () => open.result.createObjectStore('keys');
+    open.onsuccess = () => ok(open.result);
+    open.onerror = () => no(open.error);
   });
-  window.layeJourney = authorize;
+}
+
+async function key() {
+  const db = await store();
+  const held = await new Promise((ok, no) => {
+    const get = db.transaction('keys').objectStore('keys').get('me');
+    get.onsuccess = () => ok(get.result);
+    get.onerror = () => no(get.error);
+  });
+  if (held) return held;
+  const made = await crypto.subtle.generateKey({ name: 'Ed25519' }, false, ['sign', 'verify']);
+  await new Promise((ok, no) => {
+    const put = db.transaction('keys', 'readwrite').objectStore('keys').put(made, 'me');
+    put.onsuccess = () => ok();
+    put.onerror = () => no(put.error);
+  });
+  return made;
+}
+
+const hex = (bytes) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+
+const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let out = '';
+  while (n > 0n) { out = ALPHABET[Number(n % 58n)] + out; n /= 58n; }
+  for (const b of bytes) { if (b !== 0) break; out = '1' + out; }
+  return out;
+}
+
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+
+async function me() {
+  const pair = await key();
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', pair.publicKey));
+  return { pair, hex: hex(raw), did: 'did:key:z' + base58(new Uint8Array([0xed, 0x01, ...raw])) };
+}
+
+async function signIn(binding) {
+  const self = await me();
+  const { challenge } = await (await fetch('/laye/challenge')).json();
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', self.pair.privateKey, new TextEncoder().encode(challenge)));
+  const answer = await fetch('/laye/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ did: self.did, signature: b64url(signature), challenge, bindings: binding ? [binding] : [], authorize: journey }),
+  });
+  const body = await answer.json();
+  if (!answer.ok) { said(body.error_description || 'laye did not let you in', true); return; }
+  sessionStorage.removeItem('laye.journey');
+  location.assign(body.redirect);
+}
+
+async function cameBack(ticket) {
+  history.replaceState(null, '', location.pathname);
+  said('Signing in...');
+  const answer = await fetch(CEREMONY + '/auth/binding/result?ceremony=' + encodeURIComponent(ticket), { credentials: 'include' });
+  if (!answer.ok) { said('The account was not proven: ' + answer.status, true); return; }
+  const { binding } = await answer.json();
+  await signIn(binding);
+}
+
+async function draw() {
+  if (!journey) { said('Come here through the node you are logging in to.', true); return; }
+  if (!('subtle' in crypto)) { said('This browser cannot make a key here.', true); return; }
+  const self = await me();
+  const { providers } = await (await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' })).json();
+  const list = document.getElementById('providers');
+  for (const p of providers.filter((p) => p.kind === 'redirect')) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Sign in with ' + p.label;
+    button.addEventListener('click', () => {
+      const asked = new URLSearchParams({ provider: p.id, peer_pubkey_hex: self.hex, page: '/laye/back' });
+      if (p.host_prompt) {
+        const host = prompt(p.host_prompt, p.host_placeholder);
+        if (!host) return;
+        asked.set('host', host);
+      }
+      location.assign(CEREMONY + '/auth/binding/go?' + asked);
+    });
+    list.append(button);
+  }
+  const keyButton = document.createElement('button');
+  keyButton.type = 'button';
+  keyButton.textContent = 'Sign in with this browser’s key';
+  keyButton.addEventListener('click', () => signIn(null).catch((e) => said(String(e), true)));
+  list.append(keyButton);
+}
+
+const ticket = new URLSearchParams(location.search).get('ceremony');
+(ticket ? cameBack(ticket) : draw()).catch((e) => said(String(e), true));
 </script>
 </body>
 </html>

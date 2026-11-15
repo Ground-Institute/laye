@@ -113,6 +113,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         issuer: "https://laye.example".into(),
         nodes: Vec::new(),
         invitations_at: held_at.with_file_name("invitations.jsonl"),
+        ceremony_at: "https://node.example".into(),
         held_at,
     }
 }

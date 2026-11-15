@@ -13,6 +13,7 @@ struct File {
     key: PathBuf,
     held: PathBuf,
     invitations: PathBuf,
+    ceremony: String,
     public_origins: Vec<String>,
     root_identities: Vec<String>,
     binding_signers: Vec<String>,
@@ -90,6 +91,7 @@ async fn main() {
             issuer: file.issuer.trim_end_matches('/').to_string(),
             nodes: file.nodes,
             invitations_at: file.invitations,
+            ceremony_at: file.ceremony.trim_end_matches('/').to_string(),
         },
         key,
     )

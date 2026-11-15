@@ -51,6 +51,7 @@ async fn laye(name: &str, root: &laye_me::Keypair, node: &laye_me::Keypair) -> S
             public_origins: vec![ISSUER.into()],
             held_at: held_at(name),
             invitations_at: held_at(name).with_file_name("invitations.jsonl"),
+            ceremony_at: "https://node.example".into(),
             root_identities: vec![did(root)],
             binding_signers: Vec::new(),
             issuer: ISSUER.into(),
@@ -167,6 +168,15 @@ async fn logs_in(
     .await;
     assert_eq!(status, 200, "{page}");
     assert!(page.contains("laye"), "the login screen is laye's: {page}");
+    assert!(page.contains("#050608"), "laye's screen has laye's look");
+    assert!(
+        page.contains(r#"const CEREMONY = "https://node.example";"#),
+        "{page}"
+    );
+    assert!(
+        !page.contains("{{"),
+        "everything on the screen is filled in"
+    );
 
     let (_, issued) = ask(at, "GET", "/laye/challenge", String::new()).await;
     let issued: serde_json::Value = serde_json::from_str(&issued).unwrap();

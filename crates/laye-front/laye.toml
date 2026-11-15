@@ -6,6 +6,7 @@ public_origins  = ["https://laye.ground.institute", "https://api.q.sbvh.nl"]
 root_identities = ["did:key:z6Mk..."]
 binding_signers = []
 issuer          = "https://laye.ground.institute"
+ceremony        = "https://api.q.sbvh.nl"
 
 [qntx]
 origin = "http://127.0.0.1:8770"

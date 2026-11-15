@@ -97,6 +97,7 @@ async fn a_websocket_goes_through_laye_and_qntx_is_told_whose_it_is() {
             issuer: "https://laye.example".into(),
             nodes: Vec::new(),
             invitations_at: dir.join("invitations.jsonl"),
+            ceremony_at: "https://node.example".into(),
         },
         laye_key.clone(),
     )
