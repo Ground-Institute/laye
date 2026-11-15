@@ -1,0 +1,4 @@
+/target
+/result
+crates/laye-p2p/pkg
+crates/laye-p2p/dist
