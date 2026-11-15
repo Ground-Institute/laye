@@ -146,6 +146,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                         });
                         if let Err(e) = hyper::server::conn::http1::Builder::new()
                             .serve_connection(TokioIo::new(stream), service)
+                            .with_upgrades()
                             .await
                         {
                             eprintln!("laye-front: a connection ended: {e}");
@@ -250,7 +251,13 @@ fn said(status: StatusCode, words: impl Into<String>) -> Response<Full<Bytes>> {
     resp
 }
 
-async fn answer(inner: &Inner, req: Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+    // A request asking to upgrade (QNTX's page's WebSocket) is carried
+    // through once both sides have switched.
+    let upgrading = req
+        .headers()
+        .contains_key(hyper::header::UPGRADE)
+        .then(|| hyper::upgrade::on(&mut req));
     let (parts, body) = req.into_parts();
     let body = match body.collect().await {
         Ok(collected) => collected.to_bytes(),
@@ -286,32 +293,24 @@ async fn answer(inner: &Inner, req: Request<hyper::body::Incoming>) -> Response<
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".into());
 
-    // laye decides who logs in. QNTX hears only of a login laye admitted.
-    if parts.method == hyper::Method::POST && parts.uri.path() == "/auth/laye/verify" {
-        let login: door::Login = match serde_json::from_slice(&body) {
-            Ok(login) => login,
-            Err(e) => {
-                return said(
-                    StatusCode::BAD_REQUEST,
-                    format!("the login does not read: {e}"),
-                );
-            }
-        };
-        if let Err(why) = door::admitted_as(
-            &login,
-            &inner.config.root_identities,
-            &inner.config.binding_signers,
-        ) {
-            return said(StatusCode::FORBIDDEN, why);
-        }
-    }
-
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
         .filter(|(name, _)| *name != hyper::header::AUTHORIZATION)
         .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
         .collect();
+
+    if let Some(upgrading) = upgrading {
+        return carry_upgrade(
+            inner,
+            &parts.method,
+            &path,
+            &headers,
+            subject.as_deref(),
+            upgrading,
+        )
+        .await;
+    }
 
     match forward(
         inner,
@@ -337,6 +336,68 @@ async fn answer(inner: &Inner, req: Request<hyper::body::Incoming>) -> Response<
             }
         }
     }
+}
+
+/// An upgrade, asked of QNTX as this request was, and once QNTX switched,
+/// what each side sends carried to the other until either closes.
+async fn carry_upgrade(
+    inner: &Inner,
+    method: &hyper::Method,
+    path: &str,
+    headers: &[(String, String)],
+    subject: Option<&str>,
+    upgrading: hyper::upgrade::OnUpgrade,
+) -> Response<Full<Bytes>> {
+    let mut out = Request::builder()
+        .method(method)
+        .uri(format!("{}{path}", inner.config.qntx));
+    for (name, value) in headers {
+        out = out.header(name, value);
+    }
+    if let Some(subject) = subject {
+        match carried(inner, subject) {
+            Ok(signed) => out = out.header(hyper::header::AUTHORIZATION, signed),
+            Err(why) => return said(StatusCode::INTERNAL_SERVER_ERROR, why),
+        }
+    }
+    let out = match out.body(Full::new(Bytes::new())) {
+        Ok(out) => out,
+        Err(e) => return said(StatusCode::BAD_REQUEST, e.to_string()),
+    };
+    let mut resp = match inner.client.request(out).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return said(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("QNTX did not answer, and laye is still here: {e}"),
+            );
+        }
+    };
+    if resp.status() != StatusCode::SWITCHING_PROTOCOLS {
+        let (parts, body) = resp.into_parts();
+        let body = body
+            .collect()
+            .await
+            .map(|b| b.to_bytes())
+            .unwrap_or_default();
+        return Response::from_parts(parts, Full::new(body));
+    }
+    let switched = hyper::upgrade::on(&mut resp);
+    tokio::spawn(async move {
+        match tokio::try_join!(upgrading, switched) {
+            Ok((page, qntx)) => {
+                let (mut page, mut qntx) = (TokioIo::new(page), TokioIo::new(qntx));
+                if let Err(e) = tokio::io::copy_bidirectional(&mut page, &mut qntx).await {
+                    eprintln!("laye-front: a carried socket ended: {e}");
+                }
+            }
+            Err(e) => eprintln!("laye-front: a socket did not switch: {e}"),
+        }
+    });
+    let mut switching = Response::new(Full::new(Bytes::new()));
+    *switching.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    *switching.headers_mut() = resp.headers().clone();
+    switching
 }
 
 /// The session a signature is: its own key, for this origin, short-lived, and
