@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/laye-front",
     "crates/laye-grant",
     "crates/laye-me",
     "crates/laye-net",

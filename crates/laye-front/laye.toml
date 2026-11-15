@@ -1,0 +1,8 @@
+listen        = "127.0.0.1:8790"
+key           = "/var/lib/laye/key"
+held          = "/var/lib/laye/held.jsonl"
+public_origin = "https://api.q.sbvh.nl"
+
+[qntx]
+origin = "http://127.0.0.1:8770"
+did    = "did:key:z6Mk..."

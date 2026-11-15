@@ -1,0 +1,26 @@
+[package]
+name = "laye-front"
+version = "0.0.0"
+edition = "2024"
+description = "laye in front of QNTX: it owns identity, and stays when QNTX goes down."
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+laye-me = { path = "../laye-me" }
+laye-peer = { path = "../laye-peer" }
+libp2p-identity = { version = "=0.2.14", features = ["ed25519"] }
+sacred-error.workspace = true
+thiserror.workspace = true
+base64 = "=0.22.1"
+bytes = "=1.12.1"
+http-body-util = "=0.1.4"
+hyper = { version = "=1.10.1", features = ["server", "client", "http1"] }
+hyper-util = { version = "=0.1.20", features = ["tokio", "client-legacy", "http1"] }
+rand = "=0.8.5"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.143"
+tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time", "net", "sync", "fs"] }
+toml = "=0.8.23"
