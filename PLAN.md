@@ -8,8 +8,6 @@ Of P2P2A2A_Q_025 to P2P2A2A_Q_040.
 
 - [x] `P2P2A2A_001.1` A grant, a hand, an ask, and a keeper that serves or refuses, and pins.
   Proof: `alice_has_allister_read_robert`, and eleven beside it. `9d2647a`.
-- [ ] `P2P2A2A_001.2` The contract in laye's own form: signed structs with canonical bytes in laye-me, `laye-grant/v1`, as `SignedBinding` is. The `.proto` goes.
-  Proof: the canonical bytes of each, byte for byte, and the same twelve tests.
 - [ ] `P2P2A2A_001.3` A person's signature needs the person. A Grant, a Hand and a Revoke are signed by the key a passkey gives.
   Proof: an agent with a shell on its person's machine makes no Hand.
 - [ ] `P2P2A2A_001.4` The keeper serves real rows: one agent's record on one repository, in order, from where its person keeps it.
