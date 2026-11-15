@@ -2,21 +2,12 @@ syntax = "proto3";
 
 package laye.v1;
 
-// The carve-out. One person lets another person know one of their agents; the
-// other hands that to one agent of their own; the agent asks. Every link is a
-// signature, and whoever holds the links can check them. No registry, no
-// network and no name is needed for any of it.
-//
-// Qn is the n-th of the owner's words, in QUOTES.md. Nothing here repeats
-// them. What is missing around this is in PLAN.md.
-//
 // A key is named by its did:key. A person is a key that signs only when its
 // human does. An agent is a key one session holds. A hash is sha256. A time
 // is unix seconds. A field named for a statement holds that statement's id.
 
-// What one key says, as it was signed. The signature is ed25519 over
-// "laye-claim/v1|" followed by `claim`, the bytes as they are carried:
-// nothing is encoded again to verify.
+// The signature is ed25519 over "laye-claim/v1|" followed by `claim`, as
+// carried.
 message Statement {
   // A serialized Claim. Its sha256 is the statement's id.
   bytes claim = 1;
@@ -38,29 +29,24 @@ message Claim {
   }
 }
 
-// Q5 Q29 Q30 Q38
-//
-// Signed by `giver`: `of` is my agent, and `to` may know what it did on
-// `about`, by asking `keeper`.
-//
-// The grant introduces the agent. Whoever it is given to learns `of` from the
-// giver's own signature, and needs no one else's word for whose it is.
+// Signed by `giver`.
 message Grant {
   Kind kind = 1;
+  // A person.
   string giver = 2;
+  // An agent of the giver.
   string of = 3;
   oneof to {
-    // Q38 Q40. Any agent this person hands it to.
+    // Any agent this person hands it to.
     string person = 4;
-    // Q37 Q38. This agent, and no hand.
+    // This agent. It needs no Hand.
     string agent = 5;
   }
-  // Q5. The work it is about: a repository, as host/owner/name. A grant about
-  // nothing opens nothing.
+  // A repository, as host/owner/name. Empty: the grant opens nothing.
   string about = 6;
   Opens opens = 7;
-  // Q59 Q60 Q61. The key that answers for `of`'s record, where its person
-  // keeps it. An answer signed by another key is no answer.
+  // The key that answers for `of`'s record. An answer signed by another key
+  // is void.
   string keeper = 8;
   Narrow narrow = 9;
   // 0: until revoked.
@@ -68,57 +54,48 @@ message Grant {
   uint64 issued_at = 11;
 }
 
-// Q32 Q33
 enum Kind {
-  // A grant of no kind grants nothing.
+  // Grants nothing.
   KIND_UNSPECIFIED = 0;
   READ = 1;
-  // Speaking is a grant of its own, and is not this one.
+  // Speaking.
   reserved 2;
 }
 
-// Q20. The three ways to trust a record are a provider's checks, the
-// reader's own checks, and reading it. The last two need the record.
 enum Opens {
-  // A grant that does not say opens nothing.
+  // Opens nothing.
   OPENS_UNSPECIFIED = 0;
-  // What the providers `of` is entrusted to found in its record, and none of
-  // the record.
+  // The Checks of `of`'s record, and none of the record.
   CHECKS = 1;
-  // The record, and those checks with it.
+  // The record, and its Checks.
   RECORD = 2;
 }
 
-// Q39
 enum Narrow {
-  // What a grant says when it says nothing: the first agent it is served to
-  // is the only one it serves from then on.
+  // The first agent it is served to is the only one it serves from then on.
   FIRST = 0;
   // It serves every agent its person hands it to.
   KEEP = 1;
 }
 
-// The complete state of a grant. Its keeper holds it, and says it.
+// Held by the grant's keeper.
 enum State {
   STATE_UNSPECIFIED = 0;
-  // Signed, and not yet narrowed. Under KEEP, and when it is to one agent,
-  // a grant is GIVEN until it is REVOKED or ENDED.
+  // Signed, and not narrowed. Under KEEP, and to one agent, a grant is GIVEN
+  // until REVOKED or ENDED.
   GIVEN = 1;
-  // To a person, under FIRST, and served once. From GIVEN, by the first
-  // Served.
+  // To a person, under FIRST: from GIVEN, by the first Served.
   PINNED = 2;
-  // PINNED, and that agent's hand is revoked or ended. It serves no one, and
-  // no other hand revives it: the giver gives again, or does not.
+  // From PINNED, when that agent's Hand is revoked or ended. It serves no one.
   SPENT = 3;
-  // The giver revoked it. From any state.
+  // From any state, by the giver's Revoke. It serves no one.
   REVOKED = 4;
-  // `until` has passed. From any state.
+  // From any state, when `until` has passed. It serves no one.
   ENDED = 5;
 }
 
-// Signed by the grant's keeper, to its giver and to whom it was given, each
-// time the state changes. Both hold the keeper's word for what the grant is
-// now, and neither works it out alone.
+// Signed by the grant's keeper, to its giver and to whom it was given, on
+// each change of state.
 message Stands {
   bytes grant = 1;
   State state = 2;
@@ -129,23 +106,18 @@ message Stands {
   uint64 issued_at = 5;
 }
 
-// Q36 Q40
-//
-// Signed by the person a grant is to: this agent of mine may use it. The
-// giver never names the agent. The person does, once for each grant, and no
-// agent of theirs uses a grant it was not handed.
+// Signed by the person a grant is to. An agent uses that grant only with one.
 message Hand {
   bytes grant = 1;
+  // An agent of the signer.
   string agent = 2;
-  // 0: until revoked, or until the grant is no more.
+  // 0: until revoked.
   uint64 until = 3;
   uint64 issued_at = 4;
 }
 
-// Q19 Q28
-//
-// Signed by `reader`, and sent to the grant's keeper together with the Grant
-// and the Hand. It is served, or it is refused with the Why that failed.
+// Signed by `reader`, and sent to the grant's keeper with the Grant and the
+// Hand. It is answered by a Served or a Refused.
 message Ask {
   bytes grant = 1;
   // Empty when the grant is to `reader` itself.
@@ -156,11 +128,8 @@ message Ask {
   uint64 issued_at = 5;
 }
 
-// Q39
-//
-// Signed by the grant's keeper, to the reader and to the giver: this is what
-// was sent for that Ask. Under CHECKS no body is sent, and the stretch is the
-// one the checks sent with it are of.
+// Signed by the grant's keeper, to the reader and to the giver. Under CHECKS
+// no body is sent.
 message Served {
   bytes ask = 1;
   uint64 after = 2;
@@ -171,22 +140,22 @@ message Served {
   uint64 issued_at = 5;
 }
 
-// Signed by the grant's keeper, to the reader: the Ask was not served.
+// Signed by the grant's keeper, to the reader.
 message Refused {
   bytes ask = 1;
   Why why = 2;
   uint64 issued_at = 3;
 }
 
-// Each is one thing an Ask needs. The first that does not hold is the Why.
-// An Ask or a Grant whose signature does not verify gets no answer.
+// Checked in this order. The first that does not hold is the Why. An Ask or
+// a Grant whose signature does not verify gets no answer.
 enum Why {
   WHY_UNSPECIFIED = 0;
   // The Grant names another keeper.
   NOT_THIS_KEEPER = 1;
   // The Grant is not of kind READ.
   NOT_A_READ = 2;
-  // The Grant says nothing of what it opens, or is about nothing.
+  // `opens` is unspecified, or `about` is empty.
   OPENS_NOTHING = 3;
   REVOKED_GRANT = 4;
   ENDED_GRANT = 5;
@@ -202,24 +171,19 @@ enum Why {
   NOT_THE_AGENT = 11;
   // This Ask was answered before.
   SEEN_BEFORE = 12;
-  // `issued_at` is more than five minutes from the keeper's clock.
+  // `issued_at` is more than 300 seconds from the keeper's clock.
   OUT_OF_TIME = 13;
 }
 
-// Q31
-//
-// Signed by whoever signed `statement`: a Grant by its giver, a Hand or an
-// Entrust by its person. It counts from when the keeper has it.
+// Signed by the signer of `statement`: a Grant, a Hand or an Entrust. It
+// counts from when the keeper has it.
 message Revoke {
   bytes statement = 1;
   uint64 issued_at = 2;
 }
 
-// Q53 Q54 Q55
-//
-// Signed by a person, of an agent of theirs: `provider` may be shown this
-// agent's record, to check it. A provider is a third party. It is shown the
-// record; it is not where the record is kept.
+// Signed by a person: `provider` may be shown the record of `agent`, an agent
+// of theirs, to check it.
 message Entrust {
   string agent = 1;
   string provider = 2;
@@ -228,31 +192,25 @@ message Entrust {
   uint64 issued_at = 4;
 }
 
-// Q20 Q55 Q61
-//
-// Signed by a provider: what it found in one stretch of an agent's record.
-// Whoever reads it decides, by their own list of providers, what its word is
-// worth. A Check counts only beside the Entrust that let its signer see the
-// record.
+// Signed by a provider. It counts only beside the Entrust that names its
+// signer.
 message Check {
   string agent = 1;
   string about = 2;
-  // The stretch, as a Served names one. Two Checks of the same three are of
-  // the same bodies, whoever made them.
+  // The stretch, as a Served names one.
   uint64 after = 3;
   uint64 upto = 4;
   bytes digest = 5;
-  // How it checked: the provider's own name for it, and its version.
+  // The provider's name for how it checked, and its version.
   string method = 6;
-  // What the method found, as the method writes it. laye reads none of it.
+  // What the method found, as the method writes it.
   bytes finding = 7;
   uint64 issued_at = 8;
 }
 
-// What travels to one key, on the topic laye/to/<did:key>: a Contents, in a
-// sealed box to that key's ed25519 as X25519. Who carries it learns the key
-// it is for and the key that sent it, and nothing of what is in it.
+// Travels on the topic laye/to/<did:key> of the key it is for.
 message Parcel {
+  // A Contents, in a sealed box to that key's ed25519 as X25519.
   bytes sealed = 1;
 }
 
