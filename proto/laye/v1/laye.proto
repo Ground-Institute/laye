@@ -1,0 +1,180 @@
+syntax = "proto3";
+
+package laye.v1;
+
+// A key is named by its did:key. A person is a key that signs only when its
+// human does. An agent is a key one session holds. A hash is sha256. A time
+// is unix seconds. A field named for a statement holds that statement's id.
+
+// The signature is ed25519 over "laye-claim/v1|" followed by `claim`, as
+// carried.
+message Statement {
+  // A serialized Claim. Its sha256 is the statement's id.
+  bytes claim = 1;
+  bytes signature = 2;
+  string signer = 3;
+}
+
+message Claim {
+  oneof says {
+    Grant grant = 1;
+    Hand hand = 2;
+    Ask ask = 3;
+    Served served = 4;
+    Refused refused = 5;
+    Revoke revoke = 6;
+    Stands stands = 7;
+  }
+}
+
+// Signed by `giver`.
+message Grant {
+  Kind kind = 1;
+  // A person.
+  string giver = 2;
+  // An agent of the giver.
+  string of = 3;
+  oneof to {
+    // Any agent this person hands it to.
+    string person = 4;
+    // This agent. It needs no Hand.
+    string agent = 5;
+  }
+  // A repository, as host/owner/name. Empty: the grant opens nothing.
+  string about = 6;
+  Opens opens = 7;
+  // The key that answers for `of`'s record. An answer signed by another key
+  // is void.
+  string keeper = 8;
+  Narrow narrow = 9;
+  // 0: until revoked.
+  uint64 until = 10;
+  uint64 issued_at = 11;
+}
+
+enum Kind {
+  // Grants nothing.
+  KIND_UNSPECIFIED = 0;
+  READ = 1;
+  // Speaking.
+  reserved 2;
+}
+
+enum Opens {
+  // Opens nothing.
+  OPENS_UNSPECIFIED = 0;
+  // None of the record.
+  CHECKS = 1;
+  // The record.
+  RECORD = 2;
+}
+
+enum Narrow {
+  // The first agent it is served to is the only one it serves from then on.
+  FIRST = 0;
+  // It serves every agent its person hands it to.
+  KEEP = 1;
+}
+
+// Held by the grant's keeper.
+enum State {
+  STATE_UNSPECIFIED = 0;
+  // Signed, and not narrowed. Under KEEP, and to one agent, a grant is GIVEN
+  // until REVOKED or ENDED.
+  GIVEN = 1;
+  // To a person, under FIRST: from GIVEN, by the first Served.
+  PINNED = 2;
+  // From PINNED, when that agent's Hand is revoked or ended. It serves no one.
+  SPENT = 3;
+  // From any state, by the giver's Revoke. It serves no one.
+  REVOKED = 4;
+  // From any state, when `until` has passed. It serves no one.
+  ENDED = 5;
+}
+
+// Signed by the grant's keeper, to its giver and to whom it was given, on
+// each change of state.
+message Stands {
+  bytes grant = 1;
+  State state = 2;
+  // PINNED and SPENT: the agent it is pinned to.
+  string agent = 3;
+  // PINNED: the Served that pinned it.
+  bytes served = 4;
+  uint64 issued_at = 5;
+}
+
+// Signed by the person a grant is to. An agent uses that grant only with one.
+message Hand {
+  bytes grant = 1;
+  // An agent of the signer.
+  string agent = 2;
+  // 0: until revoked.
+  uint64 until = 3;
+  uint64 issued_at = 4;
+}
+
+// Signed by `reader`, and sent to the grant's keeper with the Grant and the
+// Hand. It is answered by a Served or a Refused.
+message Ask {
+  bytes grant = 1;
+  // Empty when the grant is to `reader` itself.
+  bytes hand = 2;
+  string reader = 3;
+  // The position in `of`'s record on `about` after which to answer.
+  uint64 after = 4;
+  uint64 issued_at = 5;
+}
+
+// Signed by the grant's keeper, to the reader and to the giver.
+message Served {
+  bytes ask = 1;
+  uint64 after = 2;
+  uint64 upto = 3;
+  // The hash of the stretch: its bodies in order, each after its length as
+  // eight bytes, the highest first.
+  bytes digest = 4;
+  uint64 issued_at = 5;
+}
+
+// Signed by the grant's keeper, to the reader.
+message Refused {
+  bytes ask = 1;
+  Why why = 2;
+  uint64 issued_at = 3;
+}
+
+// Checked in this order. The first that does not hold is the Why. An Ask or
+// a Grant whose signature does not verify gets no answer.
+enum Why {
+  WHY_UNSPECIFIED = 0;
+  // The Grant names another keeper.
+  NOT_THIS_KEEPER = 1;
+  // The Grant is not of kind READ.
+  NOT_A_READ = 2;
+  // `opens` is unspecified, or `about` is empty.
+  OPENS_NOTHING = 3;
+  REVOKED_GRANT = 4;
+  ENDED_GRANT = 5;
+  SPENT_GRANT = 6;
+  // PINNED, and `reader` is not the agent it is pinned to.
+  PINNED_TO_ANOTHER = 7;
+  // To a person, and no Hand came: or it does not verify, is not signed by
+  // that person, or names another grant.
+  NOT_HANDED = 8;
+  REVOKED_HAND = 9;
+  ENDED_HAND = 10;
+  // `reader` is not the Hand's agent, or not the agent the Grant is to.
+  NOT_THE_AGENT = 11;
+  // This Ask was answered before.
+  SEEN_BEFORE = 12;
+  // `issued_at` is more than 300 seconds from the keeper's clock.
+  OUT_OF_TIME = 13;
+}
+
+// Signed by the signer of `statement`: a Grant or a Hand. It counts from
+// when the keeper has it.
+message Revoke {
+  bytes statement = 1;
+  uint64 issued_at = 2;
+}

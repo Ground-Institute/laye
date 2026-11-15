@@ -1,0 +1,19 @@
+[package]
+name = "laye-grant"
+version = "0.0.0"
+edition = "2024"
+description = "The carve-out: a grant, handed to an agent, asked under, and answered."
+license = "MIT"
+
+[lints]
+workspace = true
+
+[dependencies]
+laye-me = { path = "../laye-me" }
+libp2p-identity = { version = "=0.2.14", features = ["ed25519"] }
+prost = "=0.14.4"
+sha2 = "=0.10.9"
+thiserror = { workspace = true }
+
+[build-dependencies]
+prost-build = "=0.14.4"
