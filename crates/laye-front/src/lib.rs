@@ -176,7 +176,7 @@ fn as_laye(
     inner: &Inner,
     parts: &hyper::http::request::Parts,
     body: &[u8],
-) -> Option<Response<Full<Bytes>>> {
+) -> Option<Response<Body>> {
     let host = parts
         .headers
         .get(hyper::header::HOST)
@@ -250,13 +250,13 @@ fn signer_of(inner: &Inner, parts: &hyper::http::request::Parts) -> Result<Optio
     }
 }
 
-fn said(status: StatusCode, words: impl Into<String>) -> Response<Full<Bytes>> {
-    let mut resp = Response::new(Full::new(Bytes::from(words.into())));
+fn said(status: StatusCode, words: impl Into<String>) -> Response<Body> {
+    let mut resp = Response::new(whole(words.into()));
     *resp.status_mut() = status;
     resp
 }
 
-async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Response<Full<Bytes>> {
+async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Response<Body> {
     // A request asking to upgrade (QNTX's page's WebSocket) is carried
     // through once both sides have switched.
     let upgrading = req
@@ -352,7 +352,7 @@ async fn carry_upgrade(
     headers: &[(String, String)],
     subject: Option<&str>,
     upgrading: hyper::upgrade::OnUpgrade,
-) -> Response<Full<Bytes>> {
+) -> Response<Body> {
     let mut out = Request::builder()
         .method(method)
         .uri(format!("{}{path}", inner.config.qntx));
@@ -385,7 +385,7 @@ async fn carry_upgrade(
             .await
             .map(|b| b.to_bytes())
             .unwrap_or_default();
-        return Response::from_parts(parts, Full::new(body));
+        return Response::from_parts(parts, whole(body));
     }
     let switched = hyper::upgrade::on(&mut resp);
     tokio::spawn(async move {
@@ -399,7 +399,7 @@ async fn carry_upgrade(
             Err(e) => eprintln!("laye-front: a socket did not switch: {e}"),
         }
     });
-    let mut switching = Response::new(Full::new(Bytes::new()));
+    let mut switching = Response::new(whole(Bytes::new()));
     *switching.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     *switching.headers_mut() = resp.headers().clone();
     switching
@@ -479,7 +479,7 @@ async fn forward(
     headers: &[(String, String)],
     subject: Option<&str>,
     body: Bytes,
-) -> Result<Response<Full<Bytes>>, String> {
+) -> Result<Response<Body>, String> {
     let mut out = Request::builder()
         .method(method)
         .uri(format!("{}{path}", inner.config.qntx));
@@ -492,13 +492,18 @@ async fn forward(
     }
     let out = out.body(Full::new(body)).map_err(|e| e.to_string())?;
     let resp = inner.client.request(out).await.map_err(|e| e.to_string())?;
-    let (parts, body) = resp.into_parts();
-    let body = body
-        .collect()
-        .await
-        .map_err(|e| format!("QNTX's answer did not arrive whole: {e}"))?
-        .to_bytes();
-    Ok(Response::from_parts(parts, Full::new(body)))
+    // QNTX's answer goes on as it comes: a stream of live output is not held
+    // back until it ends.
+    Ok(resp.map(BodyExt::boxed))
+}
+
+/// What laye answers with: QNTX's answer as it streams, or laye's own words.
+pub(crate) type Body = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
+
+fn whole(bytes: impl Into<Bytes>) -> Body {
+    Full::new(bytes.into())
+        .map_err(|never| match never {})
+        .boxed()
 }
 
 /// What was said while QNTX did not answer, kept, and answered as a Task that
@@ -509,7 +514,7 @@ fn keep(
     headers: Vec<(String, String)>,
     subject: String,
     body: &Bytes,
-) -> Response<Full<Bytes>> {
+) -> Response<Body> {
     let held = Held {
         path,
         headers,
