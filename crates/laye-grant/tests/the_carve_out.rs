@@ -28,20 +28,20 @@ struct World {
     robert: Keypair,
     allister: Keypair,
     another: Keypair,
-    keeper_key: Keypair,
-    keeper: Keeper,
+    eve_key: Keypair,
+    eve: Keeper,
 }
 
 fn world() -> World {
-    let keeper_key = laye_me::fresh();
+    let eve_key = laye_me::fresh();
     World {
         bob: laye_me::fresh(),
         alice: laye_me::fresh(),
         robert: laye_me::fresh(),
         allister: laye_me::fresh(),
         another: laye_me::fresh(),
-        keeper: Keeper::new(keeper_key.clone()).unwrap(),
-        keeper_key,
+        eve: Keeper::new(eve_key.clone()).unwrap(),
+        eve_key,
     }
 }
 
@@ -60,7 +60,7 @@ fn grant(w: &World, to: To, narrow: Narrow, opens: Opens) -> Statement {
             to: Some(to),
             about: GROUND.into(),
             opens: opens as i32,
-            keeper: did(&w.keeper_key),
+            keeper: did(&w.eve_key),
             narrow: narrow as i32,
             until: 0,
             issued_at: NOW,
@@ -132,7 +132,7 @@ fn stands(statement: &Statement) -> wire::Stands {
 fn alice_has_allister_read_robert() {
     let mut w = world();
     let g = to_alice(&w);
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
     let h = hand(&w.alice, &g, &w.allister);
     let a = ask(&w.allister, &g, Some(&h), NOW);
 
@@ -140,7 +140,7 @@ fn alice_has_allister_read_robert() {
         served,
         bodies,
         stands: pinned,
-    } = w.keeper.ask(&a, None, Some(&h), &Rows, NOW).unwrap()
+    } = w.eve.ask(&a, None, Some(&h), &Rows, NOW).unwrap()
     else {
         panic!("not served");
     };
@@ -150,7 +150,7 @@ fn alice_has_allister_read_robert() {
         vec![b"one".to_vec(), b"two".to_vec(), b"three".to_vec()]
     );
     let said = read(&served).unwrap();
-    assert_eq!(said.signer, did(&w.keeper_key));
+    assert_eq!(said.signer, did(&w.eve_key));
     let Says::Served(s) = said.says else {
         panic!("not a Served");
     };
@@ -169,25 +169,22 @@ fn alice_has_allister_read_robert() {
 fn an_agent_alice_did_not_hand_it_to_is_refused() {
     let mut w = world();
     let g = to_alice(&w);
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
 
     let bare = ask(&w.another, &g, None, NOW);
-    let answer = w.keeper.ask(&bare, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&bare, None, None, &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::NotHanded);
 
     // A hand it wrote itself is no hand of Alice's.
     let own = hand(&w.another, &g, &w.another);
     let with_own = ask(&w.another, &g, Some(&own), NOW);
-    let answer = w
-        .keeper
-        .ask(&with_own, None, Some(&own), &Rows, NOW)
-        .unwrap();
+    let answer = w.eve.ask(&with_own, None, Some(&own), &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::NotHanded);
 
     // Allister's hand, in another agent's Ask.
     let h = hand(&w.alice, &g, &w.allister);
     let borrowed = ask(&w.another, &g, Some(&h), NOW);
-    let answer = w.keeper.ask(&borrowed, None, Some(&h), &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&borrowed, None, Some(&h), &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::NotTheAgent);
 }
 
@@ -195,22 +192,19 @@ fn an_agent_alice_did_not_hand_it_to_is_refused() {
 fn once_allister_has_read_no_other_agent_of_alice_may() {
     let mut w = world();
     let g = to_alice(&w);
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
     let h = hand(&w.alice, &g, &w.allister);
     let a = ask(&w.allister, &g, Some(&h), NOW);
-    w.keeper.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
+    w.eve.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
 
     let h2 = hand(&w.alice, &g, &w.another);
     let a2 = ask(&w.another, &g, Some(&h2), NOW);
-    let answer = w.keeper.ask(&a2, None, Some(&h2), &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a2, None, Some(&h2), &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::PinnedToAnother);
 
     // Allister still may.
     let again = ask(&w.allister, &g, Some(&h), NOW + 1);
-    let answer = w
-        .keeper
-        .ask(&again, None, Some(&h), &Rows, NOW + 1)
-        .unwrap();
+    let answer = w.eve.ask(&again, None, Some(&h), &Rows, NOW + 1).unwrap();
     assert!(matches!(answer, Answer::Served { stands: None, .. }));
 }
 
@@ -218,32 +212,32 @@ fn once_allister_has_read_no_other_agent_of_alice_may() {
 fn under_keep_every_agent_alice_hands_it_to_may() {
     let mut w = world();
     let g = grant(&w, To::Person(did(&w.alice)), Narrow::Keep, Opens::Record);
-    let id = w.keeper.hold(&g).unwrap();
+    let id = w.eve.hold(&g).unwrap();
     for agent in [&w.allister, &w.another] {
         let h = hand(&w.alice, &g, agent);
         let a = ask(agent, &g, Some(&h), NOW);
-        let answer = w.keeper.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
+        let answer = w.eve.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
         assert!(matches!(answer, Answer::Served { stands: None, .. }));
     }
-    assert_eq!(w.keeper.state(&id), Some(State::Given));
+    assert_eq!(w.eve.state(&id), Some(State::Given));
 }
 
 #[test]
 fn bob_can_revoke_it() {
     let mut w = world();
     let g = to_alice(&w);
-    let id = w.keeper.hold(&g).unwrap();
+    let id = w.eve.hold(&g).unwrap();
     let h = hand(&w.alice, &g, &w.allister);
 
     // Alice cannot revoke Bob's grant.
-    assert!(w.keeper.revoke(&revoke(&w.alice, &g), NOW).is_err());
-    assert_eq!(w.keeper.state(&id), Some(State::Given));
+    assert!(w.eve.revoke(&revoke(&w.alice, &g), NOW).is_err());
+    assert_eq!(w.eve.state(&id), Some(State::Given));
 
-    let said = w.keeper.revoke(&revoke(&w.bob, &g), NOW).unwrap().unwrap();
+    let said = w.eve.revoke(&revoke(&w.bob, &g), NOW).unwrap().unwrap();
     assert_eq!(stands(&said).state(), State::Revoked);
 
     let a = ask(&w.allister, &g, Some(&h), NOW);
-    let answer = w.keeper.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::RevokedGrant);
 }
 
@@ -251,31 +245,24 @@ fn bob_can_revoke_it() {
 fn alice_takes_it_back_from_allister_and_it_is_spent() {
     let mut w = world();
     let g = to_alice(&w);
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
     let h = hand(&w.alice, &g, &w.allister);
     let a = ask(&w.allister, &g, Some(&h), NOW);
-    w.keeper.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
+    w.eve.ask(&a, None, Some(&h), &Rows, NOW).unwrap();
 
-    let said = w
-        .keeper
-        .revoke(&revoke(&w.alice, &h), NOW)
-        .unwrap()
-        .unwrap();
+    let said = w.eve.revoke(&revoke(&w.alice, &h), NOW).unwrap().unwrap();
     let spent = stands(&said);
     assert_eq!(spent.state(), State::Spent);
     assert_eq!(spent.agent, did(&w.allister));
 
     let again = ask(&w.allister, &g, Some(&h), NOW + 1);
-    let answer = w
-        .keeper
-        .ask(&again, None, Some(&h), &Rows, NOW + 1)
-        .unwrap();
+    let answer = w.eve.ask(&again, None, Some(&h), &Rows, NOW + 1).unwrap();
     assert_eq!(why(answer), Why::SpentGrant);
 
     // No other hand revives it.
     let h2 = hand(&w.alice, &g, &w.another);
     let a2 = ask(&w.another, &g, Some(&h2), NOW + 1);
-    let answer = w.keeper.ask(&a2, None, Some(&h2), &Rows, NOW + 1).unwrap();
+    let answer = w.eve.ask(&a2, None, Some(&h2), &Rows, NOW + 1).unwrap();
     assert_eq!(why(answer), Why::SpentGrant);
 }
 
@@ -288,15 +275,15 @@ fn a_grant_to_one_agent_needs_no_hand_and_serves_no_other() {
         Narrow::First,
         Opens::Record,
     );
-    let id = w.keeper.hold(&g).unwrap();
+    let id = w.eve.hold(&g).unwrap();
 
     let a = ask(&w.allister, &g, None, NOW);
-    let answer = w.keeper.ask(&a, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a, None, None, &Rows, NOW).unwrap();
     assert!(matches!(answer, Answer::Served { stands: None, .. }));
-    assert_eq!(w.keeper.state(&id), Some(State::Given));
+    assert_eq!(w.eve.state(&id), Some(State::Given));
 
     let other = ask(&w.another, &g, None, NOW);
-    let answer = w.keeper.ask(&other, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&other, None, None, &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::NotTheAgent);
 }
 
@@ -309,9 +296,9 @@ fn checks_open_none_of_the_record() {
         Narrow::First,
         Opens::Checks,
     );
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
     let a = ask(&w.allister, &g, None, NOW);
-    let Answer::Served { bodies, .. } = w.keeper.ask(&a, None, None, &Rows, NOW).unwrap() else {
+    let Answer::Served { bodies, .. } = w.eve.ask(&a, None, None, &Rows, NOW).unwrap() else {
         panic!("not served");
     };
     assert!(bodies.is_empty());
@@ -326,9 +313,9 @@ fn a_grant_that_does_not_say_what_it_opens_opens_nothing() {
         Narrow::First,
         Opens::Unspecified,
     );
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
     let a = ask(&w.allister, &g, None, NOW);
-    let answer = w.keeper.ask(&a, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a, None, None, &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::OpensNothing);
 }
 
@@ -341,15 +328,15 @@ fn an_ask_is_answered_once_and_in_time() {
         Narrow::First,
         Opens::Record,
     );
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
 
     let a = ask(&w.allister, &g, None, NOW);
-    w.keeper.ask(&a, None, None, &Rows, NOW).unwrap();
-    let answer = w.keeper.ask(&a, None, None, &Rows, NOW).unwrap();
+    w.eve.ask(&a, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a, None, None, &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::SeenBefore);
 
     let old = ask(&w.allister, &g, None, NOW - 301);
-    let answer = w.keeper.ask(&old, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&old, None, None, &Rows, NOW).unwrap();
     assert_eq!(why(answer), Why::OutOfTime);
 }
 
@@ -362,18 +349,18 @@ fn what_does_not_verify_gets_no_answer() {
         Narrow::First,
         Opens::Record,
     );
-    w.keeper.hold(&g).unwrap();
+    w.eve.hold(&g).unwrap();
 
     // Another agent's Ask, under Allister's name.
     let mut forged = ask(&w.another, &g, None, NOW);
     forged.signer = did(&w.allister);
-    let answer = w.keeper.ask(&forged, None, None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&forged, None, None, &Rows, NOW).unwrap();
     assert!(matches!(answer, Answer::Silent));
 
     // A grant Bob did not sign is not held.
     let mut not_bobs = g.clone();
     not_bobs.signer = did(&w.alice);
-    assert!(w.keeper.hold(&not_bobs).is_err());
+    assert!(w.eve.hold(&not_bobs).is_err());
 }
 
 #[test]
@@ -392,6 +379,6 @@ fn a_grant_that_names_another_keeper_is_said_to() {
     assert_eq!(why(answer), Why::NotThisKeeper);
 
     // Its own keeper takes it as it comes with the Ask.
-    let answer = w.keeper.ask(&a, Some(&g), None, &Rows, NOW).unwrap();
+    let answer = w.eve.ask(&a, Some(&g), None, &Rows, NOW).unwrap();
     assert!(matches!(answer, Answer::Served { .. }));
 }
