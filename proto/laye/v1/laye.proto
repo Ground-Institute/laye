@@ -2,13 +2,13 @@ syntax = "proto3";
 
 package laye.v1;
 
-// The carve-out. One person lets another person read one of their agents; the
-// other hands that to one agent of their own; the agent reads. Every link is
-// a signature, and whoever holds the links can check them. No registry, no
+// The carve-out. One person lets another person know one of their agents; the
+// other hands that to one agent of their own; the agent asks. Every link is a
+// signature, and whoever holds the links can check them. No registry, no
 // network and no name is needed for any of it.
 //
-// Qn is the n-th of the owner's words: QUOTES.md in
-// Ground-Institute/laye.ground.institute. Nothing here repeats them.
+// Qn is the n-th of the owner's words, in QUOTES.md. Nothing here repeats
+// them. What is missing around this is in PLAN.md.
 //
 // A key is named by its did:key. A person is a key that signs only when its
 // human does. An agent is a key one session holds. A hash is sha256. A time
@@ -33,12 +33,14 @@ message Claim {
     Refused refused = 5;
     Revoke revoke = 6;
     Stands stands = 7;
+    Entrust entrust = 8;
+    Check check = 9;
   }
 }
 
 // Q5 Q29 Q30 Q38
 //
-// Signed by `giver`: `of` is my agent, and `to` may read what it did on
+// Signed by `giver`: `of` is my agent, and `to` may know what it did on
 // `about`, by asking `keeper`.
 //
 // The grant introduces the agent. Whoever it is given to learns `of` from the
@@ -53,16 +55,17 @@ message Grant {
     // Q37 Q38. This agent, and no hand.
     string agent = 5;
   }
-  // Q5. The work it opens: a repository, as host/owner/name. A grant about
+  // Q5. The work it is about: a repository, as host/owner/name. A grant about
   // nothing opens nothing.
   string about = 6;
-  // The key that answers for `of`'s record. An answer signed by another key
-  // is no answer.
-  string keeper = 7;
-  Narrow narrow = 8;
+  Opens opens = 7;
+  // Q59 Q60 Q61. The key that answers for `of`'s record, where its person
+  // keeps it. An answer signed by another key is no answer.
+  string keeper = 8;
+  Narrow narrow = 9;
   // 0: until revoked.
-  uint64 until = 9;
-  uint64 issued_at = 10;
+  uint64 until = 10;
+  uint64 issued_at = 11;
 }
 
 // Q32 Q33
@@ -72,6 +75,18 @@ enum Kind {
   READ = 1;
   // Speaking is a grant of its own, and is not this one.
   reserved 2;
+}
+
+// Q20. The three ways to trust a record are a provider's checks, the
+// reader's own checks, and reading it. The last two need the record.
+enum Opens {
+  // A grant that does not say opens nothing.
+  OPENS_UNSPECIFIED = 0;
+  // What the providers `of` is entrusted to found in its record, and none of
+  // the record.
+  CHECKS = 1;
+  // The record, and those checks with it.
+  RECORD = 2;
 }
 
 // Q39
@@ -136,7 +151,7 @@ message Ask {
   // Empty when the grant is to `reader` itself.
   bytes hand = 2;
   string reader = 3;
-  // The position in `of`'s record on `about` after which to read.
+  // The position in `of`'s record on `about` after which to answer.
   uint64 after = 4;
   uint64 issued_at = 5;
 }
@@ -144,12 +159,14 @@ message Ask {
 // Q39
 //
 // Signed by the grant's keeper, to the reader and to the giver: this is what
-// was sent for that Ask.
+// was sent for that Ask. Under CHECKS no body is sent, and the stretch is the
+// one the checks sent with it are of.
 message Served {
   bytes ask = 1;
   uint64 after = 2;
   uint64 upto = 3;
-  // The hash of the Contents' bodies as they were sealed to the reader.
+  // The hash of the stretch: its bodies in order, each after its length as
+  // eight bytes, the highest first.
   bytes digest = 4;
   uint64 issued_at = 5;
 }
@@ -169,31 +186,67 @@ enum Why {
   NOT_THIS_KEEPER = 1;
   // The Grant is not of kind READ.
   NOT_A_READ = 2;
-  REVOKED_GRANT = 3;
-  ENDED_GRANT = 4;
-  SPENT_GRANT = 5;
+  // The Grant says nothing of what it opens, or is about nothing.
+  OPENS_NOTHING = 3;
+  REVOKED_GRANT = 4;
+  ENDED_GRANT = 5;
+  SPENT_GRANT = 6;
   // PINNED, and `reader` is not the agent it is pinned to.
-  PINNED_TO_ANOTHER = 6;
+  PINNED_TO_ANOTHER = 7;
   // To a person, and no Hand came: or it does not verify, is not signed by
   // that person, or names another grant.
-  NOT_HANDED = 7;
-  REVOKED_HAND = 8;
-  ENDED_HAND = 9;
+  NOT_HANDED = 8;
+  REVOKED_HAND = 9;
+  ENDED_HAND = 10;
   // `reader` is not the Hand's agent, or not the agent the Grant is to.
-  NOT_THE_AGENT = 10;
+  NOT_THE_AGENT = 11;
   // This Ask was answered before.
-  SEEN_BEFORE = 11;
+  SEEN_BEFORE = 12;
   // `issued_at` is more than five minutes from the keeper's clock.
-  OUT_OF_TIME = 12;
+  OUT_OF_TIME = 13;
 }
 
 // Q31
 //
-// Signed by whoever signed `statement`: a Grant by its giver, a Hand by its
-// person. It counts from when the keeper has it.
+// Signed by whoever signed `statement`: a Grant by its giver, a Hand or an
+// Entrust by its person. It counts from when the keeper has it.
 message Revoke {
   bytes statement = 1;
   uint64 issued_at = 2;
+}
+
+// Q53 Q54 Q55
+//
+// Signed by a person, of an agent of theirs: `provider` may be shown this
+// agent's record, to check it. A provider is a third party. It is shown the
+// record; it is not where the record is kept.
+message Entrust {
+  string agent = 1;
+  string provider = 2;
+  // 0: until revoked.
+  uint64 until = 3;
+  uint64 issued_at = 4;
+}
+
+// Q20 Q55 Q61
+//
+// Signed by a provider: what it found in one stretch of an agent's record.
+// Whoever reads it decides, by their own list of providers, what its word is
+// worth. A Check counts only beside the Entrust that let its signer see the
+// record.
+message Check {
+  string agent = 1;
+  string about = 2;
+  // The stretch, as a Served names one. Two Checks of the same three are of
+  // the same bodies, whoever made them.
+  uint64 after = 3;
+  uint64 upto = 4;
+  bytes digest = 5;
+  // How it checked: the provider's own name for it, and its version.
+  string method = 6;
+  // What the method found, as the method writes it. laye reads none of it.
+  bytes finding = 7;
+  uint64 issued_at = 8;
 }
 
 // What travels to one key, on the topic laye/to/<did:key>: a Contents, in a
