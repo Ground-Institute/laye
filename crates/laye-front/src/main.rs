@@ -12,7 +12,6 @@ struct File {
     listen: String,
     key: PathBuf,
     held: PathBuf,
-    card: PathBuf,
     invitations: PathBuf,
     ceremony: String,
     public_origins: Vec<String>,
@@ -87,7 +86,6 @@ async fn main() {
                 .map(|origin| origin.trim_end_matches('/').to_string())
                 .collect(),
             held_at: file.held,
-            card_at: file.card,
             root_identities: file.root_identities,
             binding_signers: file.binding_signers,
             issuer: file.issuer.trim_end_matches('/').to_string(),

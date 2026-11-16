@@ -113,7 +113,6 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         issuer: "https://laye.example".into(),
         nodes: Vec::new(),
         invitations_at: held_at.with_file_name("invitations.jsonl"),
-        card_at: held_at.with_file_name("card.json"),
         ceremony_at: "https://node.example".into(),
         held_at,
     }
@@ -269,10 +268,6 @@ async fn what_laye_cannot_verify_never_reaches_qntx() {
     assert_eq!(arrived.lock().unwrap().len(), 1);
 }
 
-/// The card QNTX served before it went down: 1.0 at /a2a, where the send
-/// below is said.
-const CARD: &str = r#"{"name":"q","supportedInterfaces":[{"url":"https://api.q.example/a2a","protocolBinding":"HTTP+JSON","protocolVersion":"1.0"}]}"#;
-
 /// A send in A2A 1.0, over HTTP+JSON.
 const SAID_WHILE_DOWN: &str = r#"{"message":{"messageId":"m-1","role":"ROLE_USER","parts":[{"text":"said while QNTX was down"}]}}"#;
 
@@ -283,7 +278,6 @@ async fn qntx_can_go_down_while_laye_is_still_there() {
     let arrived = Arc::new(Mutex::new(Vec::new()));
     let qntx = free_addr().await;
     let held = held_at("down");
-    std::fs::write(held.with_file_name("card.json"), CARD).unwrap();
     let laye_key = laye_me::fresh();
 
     let (front, run) = laye_front::start(config(qntx, held.clone()), laye_key.clone())

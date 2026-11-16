@@ -9,63 +9,29 @@
 // "laye would help us still be A2A capable, even when QNTX is down"
 // "For the 0.3 rows, laye either answers 0.3 itself,"
 // "sure, this is fine"
+// "laye is foundational, while QNTX can remain to be doing experimental things"
+//
+// No QNTX is started in this file: what laye speaks, it speaks of its own.
 
-use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
-use hyper::{Request, Response};
+use hyper::Request;
 use hyper_util::rt::TokioIo;
+use laye_front::a2a_spoken::SPOKEN;
 use laye_front::{Config, jwt};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 const PUBLIC: &str = "https://api.q.example";
 
-/// The card QNTX serves: each A2A version where its path says, as QNTX's
-/// a2aSpoken table mounts them (server/a2a_versions.go).
-const CARD: &str = r#"{"name":"q","supportedInterfaces":[
-{"url":"https://api.q.example/a2a","protocolBinding":"HTTP+JSON","protocolVersion":"1.0"},
-{"url":"https://api.q.example/a2a","protocolBinding":"JSONRPC","protocolVersion":"1.0"},
-{"url":"https://api.q.example/a2a/0.3","protocolBinding":"HTTP+JSON","protocolVersion":"0.3"},
-{"url":"https://api.q.example/a2a/0.3","protocolBinding":"JSONRPC","protocolVersion":"0.3"}]}"#;
-
-/// A QNTX that serves its card, and closes each connection after answering:
-/// once it stops, nothing of it is left to answer.
-async fn qntx_at(addr: SocketAddr) -> tokio::task::JoinHandle<()> {
-    let listener = TcpListener::bind(addr).await.unwrap();
-    tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                return;
-            };
-            tokio::spawn(async move {
-                let service =
-                    hyper::service::service_fn(|_: Request<hyper::body::Incoming>| async {
-                        let mut resp =
-                            Response::new(Full::new(Bytes::from_static(CARD.as_bytes())));
-                        resp.headers_mut().insert(
-                            "connection",
-                            hyper::header::HeaderValue::from_static("close"),
-                        );
-                        Ok::<_, Infallible>(resp)
-                    });
-                if let Err(e) = hyper::server::conn::http1::Builder::new()
-                    .keep_alive(false)
-                    .serve_connection(TokioIo::new(stream), service)
-                    .await
-                {
-                    eprintln!("the QNTX in this test ended a connection: {e}");
-                }
-            });
-        }
-    })
-}
-
-async fn free_addr() -> SocketAddr {
+/// Where QNTX would be, and never is.
+async fn nowhere() -> SocketAddr {
     let held = TcpListener::bind("127.0.0.1:0").await.unwrap();
     held.local_addr().unwrap()
 }
@@ -84,9 +50,8 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         listen: "127.0.0.1:0".parse().unwrap(),
         qntx: format!("http://{qntx}"),
         qntx_did: "did:key:z6MkqntxNodeStandsHere".into(),
-        public_origins: vec![PUBLIC.into()],
+        public_origins: vec!["https://laye.example".into(), PUBLIC.into()],
         held_at: dir.join("held.jsonl"),
-        card_at: dir.join("card.json"),
         root_identities: Vec::new(),
         binding_signers: Vec::new(),
         issuer: "https://laye.example".into(),
@@ -153,45 +118,98 @@ async fn ask(
     )
 }
 
-/// The card QNTX served is the card laye serves once QNTX is down, byte for
-/// byte: it is signed over those bytes.
+/// laye's card names every version laye speaks, where, at the origin it was
+/// asked at; a2a-rs reads it as 1.0, its 0.3 keys name 0.3's interface, and it
+/// is signed by laye's key over the card in JCS.
 #[tokio::test(flavor = "multi_thread")]
-async fn the_card_qntx_served_is_served_while_it_is_down() {
-    let qntx = free_addr().await;
-    let at = dir("card");
-    let running = qntx_at(qntx).await;
-    let (front, _run) = laye_front::start(config(qntx, &at), laye_me::fresh())
+async fn laye_serves_its_own_card_with_qntx_never_up() {
+    let key = laye_me::fresh();
+    let (front, _run) = laye_front::start(config(nowhere().await, &dir("card")), key.clone())
         .await
         .unwrap();
 
-    let (status, up) = ask(front.addr, "GET", "/.well-known/agent-card.json", None, "").await;
-    assert_eq!(status, 200);
-    assert_eq!(up, CARD.as_bytes());
+    let (status, body) = ask(front.addr, "GET", "/.well-known/agent-card.json", None, "").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
 
-    running.abort();
-    let (status, down) = ask(front.addr, "GET", "/.well-known/agent-card.json", None, "").await;
-    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&down));
-    assert_eq!(down, up);
+    // 1.0, as a2a-rs reads it.
+    let card: a2a::AgentCard = serde_json::from_slice(&body).unwrap();
+    let named: Vec<(String, String, String)> = card
+        .supported_interfaces
+        .iter()
+        .map(|i| {
+            (
+                i.url.clone(),
+                i.protocol_binding.clone(),
+                i.protocol_version.clone(),
+            )
+        })
+        .collect();
+    let spoken: Vec<(String, String, String)> = SPOKEN
+        .iter()
+        .flat_map(|s| {
+            s.bindings.iter().map(|b| {
+                (
+                    format!("{PUBLIC}{}", s.base),
+                    b.to_string(),
+                    s.version.to_string(),
+                )
+            })
+        })
+        .collect();
+    assert_eq!(named, spoken);
+
+    // 0.3, beside it.
+    let raw: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(raw["protocolVersion"], "0.3");
+    assert_eq!(raw["url"], format!("{PUBLIC}/a2a/0.3"));
+    assert_eq!(raw["preferredTransport"], "HTTP+JSON");
+    assert_eq!(
+        raw["additionalInterfaces"],
+        json!([{ "transport": "JSONRPC", "url": format!("{PUBLIC}/a2a/0.3") }])
+    );
+    assert_eq!(raw["securitySchemes"]["signed"]["type"], "http");
+
+    // Signed by laye's key: the signature verifies over the protected header
+    // and the card in JCS, without its signatures.
+    let did = laye_peer::did_of(&key).unwrap();
+    let signature = &raw["signatures"][0];
+    let protected = signature["protected"].as_str().unwrap();
+    let header: Value = serde_json::from_slice(&B64URL.decode(protected).unwrap()).unwrap();
+    assert_eq!(header["alg"], "EdDSA");
+    assert_eq!(
+        header["kid"],
+        format!("{did}#{}", did.strip_prefix("did:key:").unwrap())
+    );
+    let mut unsigned = raw.clone();
+    unsigned.as_object_mut().unwrap().remove("signatures");
+    let payload = B64URL.encode(laye_front::a2a_card::jcs(&unsigned).unwrap());
+    let signed_over = format!("{protected}.{payload}");
+    let bytes = B64URL
+        .decode(signature["signature"].as_str().unwrap())
+        .unwrap();
+    assert!(key.public().verify(signed_over.as_bytes(), &bytes));
 }
 
-/// While QNTX is down, a send in each version over each binding its card
-/// names is kept, and answered as that version answers it over that binding:
-/// 1.0 as a2a-rs says it, 0.3 as a2a-go's a2av0 says it.
+/// JCS orders members by their names' UTF-16 code units, and writes no space.
+#[test]
+fn jcs_is_rfc_8785() {
+    let value = json!({ "b": [1, "x\n"], "a": { "\u{e9}": true, "Z": null }, "\u{1f600}": 0, "\u{ff61}": 1 });
+    let out = String::from_utf8(laye_front::a2a_card::jcs(&value).unwrap()).unwrap();
+    assert_eq!(
+        out,
+        "{\"a\":{\"Z\":null,\"\u{e9}\":true},\"b\":[1,\"x\\n\"],\"\u{1f600}\":0,\"\u{ff61}\":1}"
+    );
+}
+
+/// With QNTX never up, a send in each version over each binding laye speaks
+/// is kept, and answered as that version answers it over that binding: 1.0 as
+/// a2a-rs says it, 0.3 as a2a-go's a2av0 says it.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_send_in_03_or_10_is_answered_while_qntx_is_down() {
-    let qntx = free_addr().await;
+async fn a_send_in_03_or_10_is_answered_with_qntx_never_up() {
     let at = dir("sends");
-    let running = qntx_at(qntx).await;
-    let (front, _run) = laye_front::start(config(qntx, &at), laye_me::fresh())
+    let (front, _run) = laye_front::start(config(nowhere().await, &at), laye_me::fresh())
         .await
         .unwrap();
-    assert_eq!(
-        ask(front.addr, "GET", "/.well-known/agent-card.json", None, "")
-            .await
-            .0,
-        200
-    );
-    running.abort();
 
     let session = laye_me::fresh();
     let message_10 = json!({"messageId":"m-10","role":"ROLE_USER","parts":[{"text":"hello"}],"contextId":"c-10"});
@@ -270,37 +288,28 @@ async fn a_send_in_03_or_10_is_answered_while_qntx_is_down() {
     assert_eq!(answer["result"]["contextId"], "c-03");
     assert_eq!(answer["result"]["status"]["state"], "submitted");
 
-    // Every one of them is kept, to be handed over when QNTX is back.
+    // Every one of them is kept, to be handed over when QNTX is up.
     let kept = std::fs::read_to_string(at.join("held.jsonl")).unwrap();
     assert_eq!(kept.lines().count(), 5);
 }
 
-/// What no interface of the card takes is not kept: QNTX did not answer, and
-/// laye says so.
+/// What laye does not speak is not kept: QNTX did not answer, and laye says
+/// so.
 #[tokio::test(flavor = "multi_thread")]
-async fn what_the_card_does_not_name_is_not_kept() {
-    let qntx = free_addr().await;
-    let at = dir("unnamed");
-    let running = qntx_at(qntx).await;
-    let (front, _run) = laye_front::start(config(qntx, &at), laye_me::fresh())
+async fn what_laye_does_not_speak_is_not_kept() {
+    let at = dir("unspoken");
+    let (front, _run) = laye_front::start(config(nowhere().await, &at), laye_me::fresh())
         .await
         .unwrap();
-    assert_eq!(
-        ask(front.addr, "GET", "/.well-known/agent-card.json", None, "")
-            .await
-            .0,
-        200
-    );
-    running.abort();
 
     let session = laye_me::fresh();
     for (path, body) in [
-        // 1.0's method, at 0.3's interface.
+        // 1.0's method, at 0.3's base.
         (
             "/a2a/0.3",
             r#"{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m","role":"ROLE_USER","parts":[{"text":"x"}]}}}"#,
         ),
-        // Nowhere the card names.
+        // Nowhere laye speaks A2A.
         (
             "/elsewhere/message:send",
             r#"{"message":{"messageId":"m","role":"ROLE_USER","parts":[{"text":"x"}]}}"#,

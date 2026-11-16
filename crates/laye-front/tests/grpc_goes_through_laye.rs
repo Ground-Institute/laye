@@ -118,7 +118,6 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         qntx_did: QNTX_DID.into(),
         public_origins: vec![PUBLIC.into()],
         held_at: dir.join("held.jsonl"),
-        card_at: dir.join("card.json"),
         root_identities: Vec::new(),
         binding_signers: Vec::new(),
         issuer: "https://laye.example".into(),

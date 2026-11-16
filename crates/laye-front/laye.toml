@@ -1,7 +1,6 @@
 listen          = "127.0.0.1:8790"
 key             = "/var/lib/laye/key"
 held            = "/var/lib/laye/held.jsonl"
-card            = "/var/lib/laye/card.json"
 invitations     = "/var/lib/laye/invitations.jsonl"
 public_origins  = ["https://laye.ground.institute", "https://api.q.sbvh.nl"]
 root_identities = ["did:key:z6Mk..."]

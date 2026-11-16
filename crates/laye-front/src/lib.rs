@@ -11,6 +11,7 @@
 // "AND LAYE OWNS IDENTITY"
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
+pub mod a2a_card;
 pub mod a2a_spoken;
 pub mod door;
 pub mod invitations;
@@ -65,9 +66,6 @@ pub struct Config {
     pub public_origins: Vec<String>,
     /// Where what was said while QNTX was down is kept.
     pub held_at: PathBuf,
-    /// Where the card QNTX served last is kept, as it served it: what laye
-    /// serves, and speaks A2A by, while QNTX is down.
-    pub card_at: PathBuf,
     /// Who administers the network: a did:key, or an account a trusted
     /// signer bound to a key. Nobody else logs in through laye.
     pub root_identities: Vec<String>,
@@ -289,6 +287,17 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         return answered;
     }
 
+    // The card is laye's own, QNTX up or not: laye is where agents are reached.
+    if is_the_card(&parts) {
+        return match a2a_card::card(origin_of(inner, &parts), &inner.did, &inner.key) {
+            Ok(card) => json(StatusCode::OK, card),
+            Err(why) => said(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("laye's card was not made: {why}"),
+            ),
+        };
+    }
+
     let presented = parts
         .headers
         .get(hyper::header::AUTHORIZATION)
@@ -348,18 +357,10 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     )
     .await
     {
-        Ok(resp) if is_the_card(&parts) && resp.status() == StatusCode::OK => {
-            card_kept(inner, resp).await
-        }
         Ok(resp) => resp,
         Err(why) => {
-            if is_the_card(&parts)
-                && let Ok(card) = std::fs::read(&inner.config.card_at)
-            {
-                return json(StatusCode::OK, card);
-            }
             let send = (parts.method == hyper::Method::POST)
-                .then(|| a2a_spoken::send_of(&inner.config.card_at, &path, &body))
+                .then(|| a2a_spoken::send_of(&path, &body))
                 .flatten();
             match (subject, send) {
                 (Some(subject), Some(send)) => keep(inner, path, headers, subject, &body, &send),
@@ -409,23 +410,25 @@ fn is_the_card(parts: &hyper::http::request::Parts) -> bool {
     parts.method == hyper::Method::GET && parts.uri.path() == a2a_spoken::CARD_PATH
 }
 
-/// The card QNTX served, kept as it served it, and passed on. It is signed
-/// over those bytes, so it verifies as QNTX's when laye serves it.
-async fn card_kept(inner: &Inner, resp: Response<Body>) -> Response<Body> {
-    let (parts, body) = resp.into_parts();
-    let card = match body.collect().await {
-        Ok(collected) => collected.to_bytes(),
-        Err(e) => {
-            return said(
-                StatusCode::BAD_GATEWAY,
-                format!("QNTX's card did not arrive whole: {e}"),
-            );
-        }
-    };
-    if let Err(why) = write_whole(&inner.config.card_at, &card) {
-        eprintln!("laye-front: QNTX's card was not kept: {why}");
-    }
-    Response::from_parts(parts, whole(card))
+/// The public origin a request came to, by its host: the first laye takes
+/// requests for when its host names none of them.
+fn origin_of<'a>(inner: &'a Inner, parts: &hyper::http::request::Parts) -> &'a str {
+    let host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .or_else(|| parts.uri.authority().map(|a| a.as_str()))
+        .unwrap_or_default();
+    let origins = &inner.config.public_origins;
+    origins
+        .iter()
+        .find(|origin| {
+            origin
+                .split_once("://")
+                .is_some_and(|(_, name)| name == host)
+        })
+        .or_else(|| origins.first())
+        .map_or("", String::as_str)
 }
 
 fn json(status: StatusCode, body: impl Into<Bytes>) -> Response<Body> {

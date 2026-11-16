@@ -1,22 +1,21 @@
-//! A2A while QNTX is down: laye answers in every version QNTX's card says it
-//! speaks, where the card says each is reached.
+//! A2A at laye: every version laye speaks is a row, where its path says, and
+//! laye's own card names each.
 
 // "do we support 0.3 yes or not, if not, make it support it, period"
 // "laye would help us still be A2A capable, even when QNTX is down"
 // "For the 0.3 rows, laye either answers 0.3 itself,"
 // "sure, this is fine"
+// "for agents"
+// "talkign to agents"
+// "laye is foundational, while QNTX can remain to be doing experimental things"
 //
 // 1.0 is a2a-rs's, pinned: the A2A version QNTX speaks through a2a-go. a2a-rs
 // has no 0.3, so laye says 0.3 itself, as a2a-go's a2av0 says it.
 
-use std::path::Path;
-
 use a2a::{
-    AgentInterface, JsonRpcId, JsonRpcRequest, JsonRpcResponse, SendMessageRequest,
-    SendMessageResponse, TRANSPORT_PROTOCOL_HTTP_JSON, TRANSPORT_PROTOCOL_JSONRPC, Task, TaskState,
-    TaskStatus,
+    JsonRpcId, JsonRpcRequest, JsonRpcResponse, SendMessageRequest, SendMessageResponse,
+    TRANSPORT_PROTOCOL_HTTP_JSON, TRANSPORT_PROTOCOL_JSONRPC, Task, TaskState, TaskStatus,
 };
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Where a card is served (A2A §8.2).
@@ -33,8 +32,31 @@ const SEND_03_REST: &str = "/v1/message:send";
 /// The 0.3 JSON-RPC send (a2a-go a2alegacy MethodMessageSend).
 const SEND_03_RPC: &str = "message/send";
 
-/// A send laye answers in place of QNTX: the version and binding it arrived
-/// in, and what its answer carries.
+/// One A2A version laye speaks: where its bindings are reached, and which.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Spoken {
+    pub version: &'static str,
+    pub base: &'static str,
+    pub bindings: &'static [&'static str],
+}
+
+/// Every A2A version laye speaks, the newest first: the order its card lists
+/// them in. Where a request arrives is the version it is in.
+pub const SPOKEN: &[Spoken] = &[
+    Spoken {
+        version: a2a::VERSION,
+        base: "/a2a",
+        bindings: &[TRANSPORT_PROTOCOL_HTTP_JSON, TRANSPORT_PROTOCOL_JSONRPC],
+    },
+    Spoken {
+        version: "0.3",
+        base: "/a2a/0.3",
+        bindings: &[TRANSPORT_PROTOCOL_HTTP_JSON, TRANSPORT_PROTOCOL_JSONRPC],
+    },
+];
+
+/// A send laye answers: the version and binding it arrived in, and what its
+/// answer carries.
 #[derive(Debug, PartialEq)]
 pub struct Send {
     pub version: String,
@@ -44,38 +66,6 @@ pub struct Send {
     context: String,
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Card {
-    #[serde(default)]
-    supported_interfaces: Vec<AgentInterface>,
-}
-
-/// The interfaces of the card kept at `at`, the longest path first: a path
-/// beneath two is the deeper one's. None when no card is kept.
-fn interfaces(at: &Path) -> Vec<(String, AgentInterface)> {
-    let Ok(bytes) = std::fs::read(at) else {
-        return Vec::new();
-    };
-    let Ok(card) = serde_json::from_slice::<Card>(&bytes) else {
-        return Vec::new();
-    };
-    let mut at: Vec<(String, AgentInterface)> = card
-        .supported_interfaces
-        .into_iter()
-        .filter_map(|i| Some((path_of(&i.url)?, i)))
-        .collect();
-    at.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
-    at
-}
-
-/// The path of a URL: what follows its scheme and host, without a trailing /.
-fn path_of(url: &str) -> Option<String> {
-    let (_, rest) = url.split_once("://")?;
-    let path = rest.find('/').and_then(|at| rest.get(at..)).unwrap_or("");
-    Some(path.trim_end_matches('/').to_string())
-}
-
 /// What `path` is beneath `at`: empty when it is `at`. None when it is not
 /// beneath it.
 fn beneath<'a>(path: &'a str, at: &str) -> Option<&'a str> {
@@ -83,27 +73,26 @@ fn beneath<'a>(path: &'a str, at: &str) -> Option<&'a str> {
     (rest.is_empty() || rest.starts_with('/')).then_some(rest)
 }
 
-/// The send a POST to `path` is, in the first interface of the kept card that
-/// takes it. None is no send any interface takes.
-pub fn send_of(card_at: &Path, path: &str, body: &[u8]) -> Option<Send> {
+/// The send a POST to `path` is: in the version whose base is the deepest
+/// that holds it, over the binding that takes it. None is no send laye takes.
+pub fn send_of(path: &str, body: &[u8]) -> Option<Send> {
     let path = path.split_once('?').map_or(path, |(p, _)| p);
     let body: Value = serde_json::from_slice(body).ok()?;
-    interfaces(card_at).into_iter().find_map(|(at, i)| {
-        let context = taken(
-            &i.protocol_version,
-            &i.protocol_binding,
-            beneath(path, &at)?,
-            &body,
-        )?;
-        let rpc = if i.protocol_binding == TRANSPORT_PROTOCOL_JSONRPC {
-            Some(body.get("id").cloned().unwrap_or(Value::Null))
-                .and_then(|id| serde_json::from_value::<JsonRpcId>(id).ok())
+    let spoken = SPOKEN
+        .iter()
+        .filter(|s| beneath(path, s.base).is_some())
+        .max_by_key(|s| s.base.len())?;
+    let under = beneath(path, spoken.base)?;
+    spoken.bindings.iter().find_map(|binding| {
+        let context = taken(spoken.version, binding, under, &body)?;
+        let rpc = if *binding == TRANSPORT_PROTOCOL_JSONRPC {
+            serde_json::from_value::<JsonRpcId>(body.get("id").cloned().unwrap_or(Value::Null)).ok()
         } else {
             None
         };
         Some(Send {
-            version: i.protocol_version,
-            binding: i.protocol_binding,
+            version: spoken.version.to_string(),
+            binding: binding.to_string(),
             rpc,
             context: context.unwrap_or_else(a2a::new_context_id),
         })
