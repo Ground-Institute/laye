@@ -23,6 +23,67 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 - [ ] `P2P2A2A_A_001_01` With QNTX stopped, one session says something to another session and it arrives, through laye.
   Proof: QNTX on the machine is stopped. One session says a sentence to another by name. The other session receives that sentence. QNTX is started again afterwards and was down the whole time.
 
+## P2P2A2A_003 laye, the app
+
+Of what was said on 2026-11-16:
+
+"think of laye like an authentication app"
+
+"auth and identity"
+
+"i have an idea, lets just use the ground institute unicode symbol as symbol of laye, but, its the sphere turning into it in 3d and locking into place, as to signnify,"
+
+"you are connected to laye"
+
+"i want to"
+"spend some time now"
+"really underrstaning what we need"
+
+"and not have to go back to this many times over"
+
+"and i want laye to have this."
+
+"i want laye to also be tht A2A layer collections get placed into and be added or removed from and be released."
+
+"but not approval packs, the packs are QNTX"
+
+"which i want it to."
+
+"i want it. so i can signal to other people if i am near my agent fleet"
+
+"If i am near my laptop and have connectivity, i can be considered near"
+
+"near is within 20m"
+
+"between 20 and 200 is close"
+
+The lines below are not quotes. Each is an interpretation and carries its id.
+
+- [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
+  - `institute.ground.laye`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension.
+  - `institute.ground.laye.island`: the Live Activity.
+  - `institute.ground.laye.credentials`: the AutoFill extension that holds passkeys.
+  - `institute.ground.laye.location`: the location push extension.
+  Proof: a CI run on a fresh team registers all four with these capabilities, and a second run changes nothing.
+
+- [ ] `P2P2A2A_A_003_02` laye holds passkeys, for laye and for anything that asks the phone for one (AutoFill Credential Provider, since iOS 17).
+  Proof: a site's passkey sign-in on the phone offers laye's passkey, and laye's extension signs it.
+
+- [ ] `P2P2A2A_A_003_03` The provider ceremony moves from q into laye; that is what was wanted of it. Sign in with Apple is laye's own, native.
+  Proof: signing in to laye with Apple, Google and GitHub reaches no QNTX node.
+
+- [ ] `P2P2A2A_A_003_04` A root verifies an ID in person before inviting: ID Verifier – Display Only, wanted in laye's invite flow. The system shows the verified ID on the root's phone; laye receives none of it.
+  Proof: a root taps an invitee's iPhone, sees the ID Wallet verified, and invites; laye's store holds no ID data afterwards.
+
+- [ ] `P2P2A2A_A_003_05` What waits on a person stands on the phone as a Live Activity, as QNTX-App's island does (ADR-060), from laye.
+  Proof: with the app closed, laye starts a Live Activity on the phone, and a press on it is the person's own laye session.
+
+- [ ] `P2P2A2A_A_003_06` laye is the A2A layer collections are placed into. What an agent says to an agent is held by laye for its receiver; a person adds to it, removes from it, and releases it. Approval packs are QNTX's: QNTX places items into laye's collections.
+  Proof: one session says something to another through laye; it is held, a person releases it from the phone, and the other session receives it. A QNTX approval pack places an item into the same collection.
+
+- [ ] `P2P2A2A_A_003_07` Others in the network learn whether you are near your agent fleet. Near is your phone answering laye's `location` push, within 20 m of your laptop; close is 20 m to 200 m; past that, not near. The laptop's position comes from mycelia on it. The asker learns near, close or not near, never a position. When the two positions' accuracy is wider than what separates the answers, laye says it cannot tell.
+  Proof: with the phone beside the laptop, someone asks and hears near; across the street, close; elsewhere, not near; with the phone offline, not near.
+
 ## P2P2A2A_001 One person's agent reads another person's agent
 
 Of P2P2A2A_Q_018, P2P2A2A_Q_019, P2P2A2A_Q_021, and P2P2A2A_Q_025 to P2P2A2A_Q_040.
