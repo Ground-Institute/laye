@@ -79,6 +79,10 @@ async fn qntx_at(
                             let mut resp = Response::new(StreamBody::new(frames));
                             resp.headers_mut()
                                 .insert("content-type", "application/grpc".parse().unwrap());
+                            // grpc-go declares its trailers, as HTTP/1.1 needs
+                            // before it carries them.
+                            resp.headers_mut()
+                                .insert("trailer", "Grpc-Status".parse().unwrap());
                             Ok::<_, Infallible>(resp)
                         }
                     });
@@ -202,6 +206,44 @@ async fn a_grpc_call_goes_through_laye() {
     let claims = jwt::read(got[0].authorization.strip_prefix("Signed ").unwrap()).unwrap();
     assert_eq!(claims.iss, laye_peer::did_of(&laye_key).unwrap());
     assert_eq!(claims.sub, laye_peer::did_of(&session).unwrap());
+}
+
+/// A front door that ended TLS hands gRPC on in HTTP/1.1, as Caddy does;
+/// it reaches QNTX in HTTP/2 all the same, and its trailers come back.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_grpc_call_handed_on_in_http1_reaches_qntx_in_http2() {
+    let arrived = Arc::new(Mutex::new(Vec::new()));
+    let qntx = free_addr().await;
+    let _qntx = qntx_at(qntx, arrived.clone()).await;
+    let (front, _run) = laye_front::start(config(qntx, &dir("http1")), laye_me::fresh())
+        .await
+        .unwrap();
+
+    let stream = tokio::net::TcpStream::connect(front.addr).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let req = Request::post("/lf.a2a.v1.A2AService/SendMessage")
+        .header("host", "api.q.example")
+        .header("content-type", "application/grpc")
+        .header("te", "trailers")
+        .header("authorization", signed(&laye_me::fresh()))
+        .body(Full::new(Bytes::from_static(ASKED)))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let collected = resp.into_body().collect().await.unwrap();
+    assert_eq!(
+        collected.trailers().unwrap().get("grpc-status").unwrap(),
+        "0"
+    );
+    assert_eq!(collected.to_bytes().as_ref(), ANSWERED);
+
+    let got = arrived.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].version, Version::HTTP_2);
+    assert_eq!(got[0].body, ASKED);
 }
 
 /// While QNTX is down, a gRPC call is told so in gRPC: UNAVAILABLE.

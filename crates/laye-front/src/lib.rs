@@ -587,7 +587,13 @@ async fn forward(
         out = out.header(hyper::header::AUTHORIZATION, signed);
     }
     let out = out.body(Full::new(body)).map_err(|e| e.to_string())?;
-    let client = if version == hyper::Version::HTTP_2 {
+    // gRPC is HTTP/2, however it reached laye: a front door that ended TLS
+    // hands it on in HTTP/1.1 (Caddy's reverse_proxy does), and QNTX's gRPC
+    // refuses that ("gRPC requires HTTP/2").
+    let grpc = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-type") && value.starts_with("application/grpc")
+    });
+    let client = if version == hyper::Version::HTTP_2 || grpc {
         &inner.h2c
     } else {
         &inner.client
