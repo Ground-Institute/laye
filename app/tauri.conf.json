@@ -20,8 +20,8 @@
     }
   },
   "build": {
-    "beforeBuildCommand": "./scene.sh",
-    "beforeDevCommand": "./scene.sh",
+    "beforeBuildCommand": "sh -c 'exec \"$(git rev-parse --show-toplevel)/app/scene.sh\"'",
+    "beforeDevCommand": "sh -c 'exec \"$(git rev-parse --show-toplevel)/app/scene.sh\"'",
     "frontendDist": "web"
   },
   "bundle": {
