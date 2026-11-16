@@ -194,6 +194,27 @@ async fn laye_checks_who_signed_and_qntx_is_told_by_laye() {
     assert_eq!(claims.aud, vec![QNTX_DID.to_string()]);
 }
 
+/// "made me log in"
+/// "used passkey"
+/// "login again"
+///
+/// A session QNTX made itself is QNTX's to check: laye hands it on as it came.
+#[tokio::test(flavor = "multi_thread")]
+async fn qntx_s_own_session_reaches_qntx_as_it_came() {
+    let arrived = Arc::new(Mutex::new(Vec::new()));
+    let qntx = free_addr().await;
+    let _qntx = qntx_at(qntx, arrived.clone()).await;
+    let (front, _run) = laye_front::start(config(qntx, held_at("bearer")), laye_me::fresh())
+        .await
+        .unwrap();
+
+    let (status, body) = say(front.addr, "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0", "the build on k is red").await;
+    assert_eq!(status, 200, "{body}");
+    let got = arrived.lock().unwrap().clone();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].authorization, "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+}
+
 /// A signature that is not the session's, or one presented twice, never
 /// reaches QNTX.
 #[tokio::test(flavor = "multi_thread")]
