@@ -60,10 +60,10 @@ Of what was said on 2026-11-16:
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
-  - `institute.ground.laye`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension, Trust Insights.
-  - `institute.ground.laye.island`: the Live Activity.
-  - `institute.ground.laye.credentials`: the AutoFill extension that holds passkeys.
-  - `institute.ground.laye.location`: the location push extension.
+  - `laye.ground.institute`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension, Trust Insights.
+  - `laye.ground.institute.island`: the Live Activity.
+  - `laye.ground.institute.credentials`: the AutoFill extension that holds passkeys.
+  - `laye.ground.institute.location`: the location push extension.
   Proof: a CI run on a fresh team registers all four with these capabilities, and a second run changes nothing.
 
 - [ ] `P2P2A2A_A_003_02` laye holds passkeys, for laye and for anything that asks the phone for one (AutoFill Credential Provider, since iOS 17).

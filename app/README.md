@@ -60,7 +60,7 @@ Both apps could use the following from one place:
 
 These steps are done by a person:
 
-- App ID `institute.ground.laye`.
+- App ID `laye.ground.institute`.
 - An App Store provisioning profile for it, and the distribution certificate.
 - The app in App Store Connect.
 - The secrets the TestFlight pipeline reads, under the names QNTX-App uses:
