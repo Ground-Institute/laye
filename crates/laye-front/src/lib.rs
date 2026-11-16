@@ -298,10 +298,19 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         .map(|p| p.as_str().to_string())
         .unwrap_or_else(|| "/".into());
 
+    // A session's own signature is laye's to read, and goes no further: laye
+    // says who it is in its place. Any other credential is QNTX's own, a
+    // session QNTX made and checks itself (QNTX-Web ts/client/session.ts),
+    // and is handed on as it came. Taken away, every request of a person
+    // logged in at QNTX reached it as a stranger, and their app asked them
+    // to log in, again and again.
     let headers: Vec<(String, String)> = parts
         .headers
         .iter()
-        .filter(|(name, _)| *name != hyper::header::AUTHORIZATION)
+        .filter(|(name, value)| {
+            *name != hyper::header::AUTHORIZATION
+                || !value.to_str().is_ok_and(|v| v.starts_with(SIGNED))
+        })
         .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
         .collect();
 
