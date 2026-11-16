@@ -60,7 +60,7 @@ Of what was said on 2026-11-16:
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
-  - `institute.ground.laye`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension.
+  - `institute.ground.laye`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension, Trust Insights.
   - `institute.ground.laye.island`: the Live Activity.
   - `institute.ground.laye.credentials`: the AutoFill extension that holds passkeys.
   - `institute.ground.laye.location`: the location push extension.
@@ -83,6 +83,9 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_07` Others in the network learn whether you are near your agent fleet. Near is your phone answering laye's `location` push, within 20 m of your laptop; close is 20 m to 200 m; past that, not near. The laptop's position comes from mycelia on it. The asker learns near, close or not near, never a position. When the two positions' accuracy is wider than what separates the answers, laye says it cannot tell.
   Proof: with the phone beside the laptop, someone asks and hears near; across the street, close; elsewhere, not near; with the phone offline, not near.
+
+- [ ] `P2P2A2A_A_003_08` Before an act someone could be talked into, laye asks the phone whether the person is likely being coached (Trust Insights, `IsLikelyBeingCoachedInsight`), and if so asks more before acting. The acts: approving a sign-in, inviting, kicking, granting another person's agent to read, releasing a collection.
+  Proof: with coaching indicated, approving a sign-in asks for Face ID and a pause before it is done; without it, one press does it.
 
 ## P2P2A2A_001 One person's agent reads another person's agent
 
