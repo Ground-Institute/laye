@@ -32,6 +32,9 @@ jobs:
           path: target
           key: workspace-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: workspace-${{ steps.rust.outputs.cachekey }}-
+      # laye-grant builds its proto with prost, which runs protoc.
+      - name: protoc
+        run: sudo apt-get install -y --no-install-recommends protobuf-compiler
       - name: Every crate's tests
         run: cargo test --workspace --exclude laye-scene
       - name: The scene answers for every warning
