@@ -162,7 +162,7 @@ jobs:
         if: steps.signing.outputs.held == 'true'
         id: ipa
         run: |
-          found=$(find . -name '*.ipa' -type f | head -1)
+          found=$(find gen -name '*.ipa' -type f | head -1)
           test -n "$found" || { find gen/apple/build -type f 2>/dev/null; echo "no ipa produced"; exit 1; }
           echo "path=$PWD/$found" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
