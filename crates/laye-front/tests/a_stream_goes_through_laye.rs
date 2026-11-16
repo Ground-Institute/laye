@@ -70,6 +70,7 @@ async fn the_first_part_of_a_stream_arrives_while_qntx_still_streams() {
             qntx_did: "did:key:z6MkqntxNodeStandsHere".into(),
             public_origins: vec!["https://api.q.example".into()],
             held_at: dir.join("held.jsonl"),
+            card_at: dir.join("card.json"),
             root_identities: Vec::new(),
             binding_signers: Vec::new(),
             issuer: "https://laye.example".into(),

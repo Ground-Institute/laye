@@ -11,6 +11,7 @@
 // "AND LAYE OWNS IDENTITY"
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
+pub mod a2a_spoken;
 pub mod door;
 pub mod invitations;
 mod issuer;
@@ -64,6 +65,9 @@ pub struct Config {
     pub public_origins: Vec<String>,
     /// Where what was said while QNTX was down is kept.
     pub held_at: PathBuf,
+    /// Where the card QNTX served last is kept, as it served it: what laye
+    /// serves, and speaks A2A by, while QNTX is down.
+    pub card_at: PathBuf,
     /// Who administers the network: a did:key, or an account a trusted
     /// signer bound to a key. Nobody else logs in through laye.
     pub root_identities: Vec<String>,
@@ -336,13 +340,21 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     )
     .await
     {
+        Ok(resp) if is_the_card(&parts) && resp.status() == StatusCode::OK => {
+            card_kept(inner, resp).await
+        }
         Ok(resp) => resp,
         Err(why) => {
-            let is_a_send = parts.method == hyper::Method::POST
-                && path.starts_with("/a2a/")
-                && path.ends_with("/message:send");
-            match subject {
-                Some(subject) if is_a_send => keep(inner, path, headers, subject, &body),
+            if is_the_card(&parts)
+                && let Ok(card) = std::fs::read(&inner.config.card_at)
+            {
+                return json(StatusCode::OK, card);
+            }
+            let send = (parts.method == hyper::Method::POST)
+                .then(|| a2a_spoken::send_of(&inner.config.card_at, &path, &body))
+                .flatten();
+            match (subject, send) {
+                (Some(subject), Some(send)) => keep(inner, path, headers, subject, &body, &send),
                 _ => said(
                     StatusCode::SERVICE_UNAVAILABLE,
                     format!("QNTX did not answer, and laye is still here: {why}"),
@@ -350,6 +362,39 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
             }
         }
     }
+}
+
+fn is_the_card(parts: &hyper::http::request::Parts) -> bool {
+    parts.method == hyper::Method::GET && parts.uri.path() == a2a_spoken::CARD_PATH
+}
+
+/// The card QNTX served, kept as it served it, and passed on. It is signed
+/// over those bytes, so it verifies as QNTX's when laye serves it.
+async fn card_kept(inner: &Inner, resp: Response<Body>) -> Response<Body> {
+    let (parts, body) = resp.into_parts();
+    let card = match body.collect().await {
+        Ok(collected) => collected.to_bytes(),
+        Err(e) => {
+            return said(
+                StatusCode::BAD_GATEWAY,
+                format!("QNTX's card did not arrive whole: {e}"),
+            );
+        }
+    };
+    if let Err(why) = write_whole(&inner.config.card_at, &card) {
+        eprintln!("laye-front: QNTX's card was not kept: {why}");
+    }
+    Response::from_parts(parts, whole(card))
+}
+
+fn json(status: StatusCode, body: impl Into<Bytes>) -> Response<Body> {
+    let mut resp = Response::new(whole(body));
+    *resp.status_mut() = status;
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    resp
 }
 
 /// An upgrade, asked of QNTX as this request was, and once QNTX switched,
@@ -516,13 +561,14 @@ fn whole(bytes: impl Into<Bytes>) -> Body {
 }
 
 /// What was said while QNTX did not answer, kept, and answered as a Task that
-/// has not been received yet.
+/// has not been received yet, in the version and binding it was said in.
 fn keep(
     inner: &Inner,
     path: String,
     headers: Vec<(String, String)>,
     subject: String,
     body: &Bytes,
+    send: &a2a_spoken::Send,
 ) -> Response<Body> {
     let held = Held {
         path,
@@ -540,13 +586,7 @@ fn keep(
         );
     }
     let id = format!("laye-held-{}-{}", now(), all.len());
-    said(
-        StatusCode::OK,
-        serde_json::json!({
-            "task": { "id": id, "status": { "state": "TASK_STATE_SUBMITTED" } }
-        })
-        .to_string(),
-    )
+    json(StatusCode::OK, a2a_spoken::submitted(send, &id))
 }
 
 /// What was kept, handed to QNTX in the order it was said, until QNTX does
@@ -632,8 +672,13 @@ fn save(path: &std::path::Path, all: &[Held]) -> Result<(), String> {
         text.push_str(&serde_json::to_string(held).map_err(|e| e.to_string())?);
         text.push('\n');
     }
+    write_whole(path, text.as_bytes())
+}
+
+/// `bytes`, written beside `path` and moved over it.
+fn write_whole(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     let mut beside = path.as_os_str().to_owned();
     beside.push(".new");
-    std::fs::write(&beside, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::fs::write(&beside, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     std::fs::rename(&beside, path).map_err(|e| format!("{}: {e}", path.display()))
 }

@@ -92,6 +92,7 @@ async fn a_websocket_goes_through_laye_and_qntx_is_told_whose_it_is() {
             qntx_did: "did:key:z6MkqntxNodeStandsHere".into(),
             public_origins: vec![PUBLIC.into()],
             held_at: dir.join("held.jsonl"),
+            card_at: dir.join("card.json"),
             root_identities: Vec::new(),
             binding_signers: Vec::new(),
             issuer: "https://laye.example".into(),

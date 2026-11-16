@@ -72,6 +72,7 @@ async fn world(name: &str) -> World {
             qntx_did: did(&node),
             public_origins: vec![ISSUER.into()],
             held_at: dir.join("held.jsonl"),
+            card_at: dir.join("card.json"),
             root_identities: vec![did(&root)],
             binding_signers: vec![hex(&public(&signer))],
             issuer: ISSUER.into(),
