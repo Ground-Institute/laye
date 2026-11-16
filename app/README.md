@@ -58,14 +58,22 @@ Both apps could use the following from one place:
 
 ## Apple
 
-These steps are done by a person:
+What Apple holds for laye, team `88645J88Q8`:
 
-- App ID `laye.ground.institute`.
-- An App Store provisioning profile for it, and the distribution certificate.
-- The app in App Store Connect.
-- The secrets the TestFlight pipeline reads, under the names QNTX-App uses:
+| What | Identifier |
+|---|---|
+| App ID, named Ground Institute laye | `laye.ground.institute` |
+| Services ID, named Ground Institute laye service: Sign in with Apple on the web, returning to `https://laye.ground.institute/auth/binding/callback` | `services.laye.ground.institute` |
+| Sign in with Apple key, primary App ID `laye.ground.institute` | `B25XSNYP25`; the `.p8` is SSM SecureString `/laye/apple/private-key` in q's account |
+
+The App ID's capabilities are `P2P2A2A_A_003_01` in PLAN.md.
+
+Still done by a person:
+
+- The app in App Store Connect: the API lists, reads and modifies apps, and creates none. Its Apple ID goes into this repo's variable `APPLE_APP_ID`.
+- The team's signing secrets in this repo, under the names QNTX-App holds them:
   - `APPLE_DEVELOPMENT_TEAM`
   - `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`
-  - `IOS_MOBILE_PROVISION`, `PROVISIONING_PROFILE`
   - `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_CONTENT`
-  - `APPLE_APP_ID`
+
+The provisioning profile is made by CI (`ci/apple.py`) against the certificate in `IOS_CERTIFICATE`.
