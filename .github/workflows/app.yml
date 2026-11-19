@@ -27,6 +27,10 @@
           "run": "sudo apt-get install -y --no-install-recommends protobuf-compiler"
         },
         {
+          "name": "etcd 3.7.3",
+          "run": "curl -fsSLO https://github.com/etcd-io/etcd/releases/download/v3.7.3/etcd-v3.7.3-linux-amd64.tar.gz\necho \"5dfa9cc3b3ce3b4b491fbcc2057d3daa166bcc6676f743fcd20f8e5760cb9775  etcd-v3.7.3-linux-amd64.tar.gz\" | sha256sum --check\ntar -xzf etcd-v3.7.3-linux-amd64.tar.gz\necho \"$PWD/etcd-v3.7.3-linux-amd64\" >> \"$GITHUB_PATH\"\n"
+        },
+        {
           "name": "Every crate's tests",
           "run": "cargo test --workspace --exclude laye-scene"
         },

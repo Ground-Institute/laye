@@ -76,6 +76,7 @@ async fn the_first_part_of_a_stream_arrives_while_qntx_still_streams() {
             nodes: Vec::new(),
             invitations_at: dir.join("invitations.jsonl"),
             ceremony_at: "https://node.example".into(),
+            names: None,
         },
         laye_me::fresh(),
     )

@@ -52,6 +52,7 @@ async fn laye(name: &str, root: &laye_me::Keypair, node: &laye_me::Keypair) -> S
             held_at: held_at(name),
             invitations_at: held_at(name).with_file_name("invitations.jsonl"),
             ceremony_at: "https://node.example".into(),
+            names: None,
             root_identities: vec![did(root)],
             binding_signers: Vec::new(),
             issuer: ISSUER.into(),

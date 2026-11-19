@@ -58,6 +58,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         nodes: Vec::new(),
         invitations_at: dir.join("invitations.jsonl"),
         ceremony_at: "https://node.example".into(),
+        names: None,
     }
 }
 

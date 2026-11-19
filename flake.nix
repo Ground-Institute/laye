@@ -32,6 +32,8 @@
           };
           cargoBuildFlags = [ "-p" "laye-front" ];
           cargoTestFlags = [ "-p" "laye-front" ];
+          # Names are kept in etcd, and their tests run a real one.
+          nativeCheckInputs = [ pkgs.etcd ];
           meta.mainProgram = "laye-front";
         };
         default = laye-peer;
