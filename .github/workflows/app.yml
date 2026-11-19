@@ -3,9 +3,9 @@
 # "make it so i get to see a screenshot of the screen"
 # "make sure it has serious ci. ilike QNTX app does"
 #
-# Modelled on teranos/QNTX-App's ci/testflight.nix. A run is green when App
-# Store Connect says a tester can install the build, not when the upload
-# returned (app/ci/delivered.py).
+# Apple, from App ID to tester, is teranos/ios-common's apple/. A run is green
+# when App Store Connect says a tester can install the build, not when the
+# upload returned (delivered.py).
 name: app
 
 on:
@@ -119,7 +119,13 @@ jobs:
             echo "::warning::laye holds no Apple signing secrets yet: the app is proven, not signed"
             echo "held=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: laye's App ID and profile at Apple
+      # The ios-common tag app/Cargo.toml takes the sheet from.
+      - name: ios-common
+        run: |
+          tag=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["dependencies"]["sheet"]["tag"])')
+          git clone -q --depth 1 --branch "$tag" https://github.com/teranos/ios-common "$RUNNER_TEMP/ios-common"
+          echo "IOS_COMMON=$RUNNER_TEMP/ios-common/apple" >> "$GITHUB_ENV"
+      - name: laye's App IDs, capabilities and profile at Apple
         if: steps.signing.outputs.held == 'true'
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -130,7 +136,7 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/asc"
           "$RUNNER_TEMP/asc/bin/pip" install --quiet 'pyjwt[crypto]' requests
-          "$RUNNER_TEMP/asc/bin/python" ci/apple.py "$RUNNER_TEMP/laye.mobileprovision"
+          "$RUNNER_TEMP/asc/bin/python" "$IOS_COMMON/apple.py" apple.json "$RUNNER_TEMP/laye.mobileprovision"
           echo "IOS_MOBILE_PROVISION=$(base64 < "$RUNNER_TEMP/laye.mobileprovision" | tr -d '\n')" >> "$GITHUB_ENV"
       - name: Fetch tauri-cli 2.11.4
         if: steps.signing.outputs.held == 'true'
@@ -149,7 +155,7 @@ jobs:
           APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
           PROVISIONING_PROFILE: laye
         run: |
-          python3 ci/ios-project.py gen/apple/project.yml
+          python3 "$IOS_COMMON/ios-project.py" gen/apple/project.yml
           cd gen/apple && xcodegen generate
       - name: Build the signed IPA
         if: steps.signing.outputs.held == 'true'
@@ -179,20 +185,7 @@ jobs:
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
           APPLE_APP_ID: ${{ vars.APPLE_APP_ID }}
           IPA: ${{ steps.ipa.outputs.path }}
-        run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          echo "$APPLE_API_KEY_CONTENT" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_$APPLE_API_KEY.p8
-          plist=$(mktemp)
-          unzip -p "$IPA" 'Payload/*.app/Info.plist' > "$plist"
-          bundle=$(plutil -extract CFBundleIdentifier raw "$plist")
-          build=$(plutil -extract CFBundleVersion raw "$plist")
-          short=$(plutil -extract CFBundleShortVersionString raw "$plist")
-          echo "uploading $bundle $short ($build)"
-          xcrun altool --upload-package "$IPA" --type ios \
-            --apple-id "$APPLE_APP_ID" --bundle-id "$bundle" \
-            --bundle-version "$build" --bundle-short-version-string "$short" \
-            --api-key "$APPLE_API_KEY" --api-issuer "$APPLE_API_ISSUER"
-          echo "BUILD=$build" >> "$GITHUB_ENV"
+        run: sh "$IOS_COMMON/upload.sh" "$IPA" >> "$GITHUB_ENV"
       - name: Delivered to testers
         if: steps.signing.outputs.held == 'true' && vars.APPLE_APP_ID != '' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         env:
@@ -200,4 +193,4 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
         run: |
-          "$RUNNER_TEMP/asc/bin/python" ci/delivered.py wait "$BUILD"
+          "$RUNNER_TEMP/asc/bin/python" "$IOS_COMMON/delivered.py" wait "$BUILD"

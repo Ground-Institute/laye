@@ -25,8 +25,9 @@ tauri-plugin-deep-link = "=2.4.10"
 # laye's and the ceremony's addresses answer the app from Rust, where no
 # browser asks either of them whether a page at laye:// may read the answer.
 tauri-plugin-http = "2"
-# QNTX-App's sheet: the provider ceremony in ASWebAuthenticationSession.
-sheet = { path = "sheet" }
+# The sheet: the provider ceremony in ASWebAuthenticationSession. Its tag is
+# also the ios-common CI runs apple/ from (.github/workflows/app.yml).
+sheet = { git = "https://github.com/teranos/ios-common", tag = "v0.1.2" }
 # generate_context! names serde_json from the crate it expands in.
 serde_json = "1"
 
