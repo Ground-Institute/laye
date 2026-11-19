@@ -9,7 +9,16 @@
       each = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
     in
     {
-      packages = each (pkgs: rec {
+      packages = each (pkgs: let
+        # laye's glass, as vitreous makes it: "the projects take from the
+        # design system, never the other way".
+        vitreous = pkgs.fetchFromGitHub {
+          owner = "teranos";
+          repo = "vitreous";
+          rev = "638f98d64844b38abb7ca68f1f8f5498c2b7bbf9";
+          sha256 = "1ajc81fxx65dn4lj0wgm1kjh61rhmjmak2m51dcfah7lizpqb09p";
+        };
+      in rec {
         laye-peer = pkgs.rustPlatform.buildRustPackage {
           pname = "laye-peer";
           version = "0.0.0";
@@ -62,6 +71,8 @@
             runHook preInstall
             wasm-bindgen --target web --out-dir $out \
               target/wasm32-unknown-unknown/release/laye_p2p.wasm
+            mkdir -p $out/vitreous
+            cp ${vitreous}/*.css $out/vitreous/
             runHook postInstall
           '';
           doCheck = false;

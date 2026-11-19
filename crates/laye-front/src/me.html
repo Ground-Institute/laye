@@ -4,76 +4,104 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>laye</title>
+<!--
+  "but laye needs to feel like laye"
+  "so dont copy cat entirely"
+  Glass, its shadow, and how a press rises and settles are vitreous's,
+  taken as vitreous writes them. What the glass is made of, and what stands
+  behind it, are laye's: its night, the lit stage over it, and the ground
+  symbol the sphere becomes (app/screens).
+-->
+<link rel="stylesheet" href="/laye/web/vitreous/vitreous.css">
 <style>
-  /* laye's look, as login.html has it. */
   :root {
     color-scheme: dark;
+    /* What vitreous asks a site to declare: its shadow's ink, and what its
+       glass is made of. laye's glass is its stage's night blue. */
+    --ink-rgb: 0 0 0;
+    --glass-rgb: 22 26 38;
     --ground: #050608;
-    --ink: #ddd;
-    --panel: rgba(20, 22, 28, 0.85);
-    --edge: #333;
+    --stage: #1e2233;
+    --ink: #e6e2e2;
+    --quiet: #8b90a0;
+    --symbol: #f0d9d6;
     /*
       "laye s calm"
-      A press is neutral; red says only that something went wrong.
+      Red says only that something went wrong.
     */
-    --press: #1a1d24;
-    --press-hover: #232731;
-    --press-ink: #ddd;
-    --press-edge: #3a3f4a;
     --wrong: #e88;
   }
-  html, body { height: 100%; }
+  html, body { height: 100%; margin: 0; }
   body {
-    margin: 0;
-    padding: 0 16px;
-    display: grid;
-    place-items: center;
-    background: radial-gradient(ellipse at 50% 30%, #0b1020 0%, var(--ground) 60%);
+    background: var(--ground);
     color: var(--ink);
-    font: 14px ui-monospace, Menlo, monospace;
+    font: 14px/1.5 ui-monospace, Menlo, monospace;
+  }
+  /* The stage, lit over the night, and the symbol over it: what the glass
+     is seen against. */
+  .stage {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(ellipse 90% 34% at 50% 34%, var(--stage) 0 70%, transparent 71%),
+      var(--ground);
+  }
+  .symbol {
+    position: fixed; left: 50%; top: 18vh; transform: translateX(-50%);
+    z-index: -1; pointer-events: none;
+    font: 7rem/1 ui-sans-serif, system-ui, sans-serif;
+    color: var(--symbol);
+    text-shadow: 0 0 18px rgb(240 217 214 / 0.45);
   }
   main {
-    width: 100%;
-    max-width: 24rem;
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    width: min(24rem, calc(100% - 32px));
+    box-sizing: border-box;
     padding: 1.5em 1.2em;
-    background: var(--panel);
-    border: 1px solid var(--edge);
     text-align: center;
+    /* Drawn once, whole: until then it is not there to reach for. */
+    visibility: hidden;
   }
-  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; text-shadow: 0 0 12px rgba(180, 200, 255, 0.25); }
-  #who { overflow-wrap: anywhere; }
-  .presses { display: grid; gap: 0.75em; margin: 1.2em 0; }
+  main.drawn { visibility: visible; }
+  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; }
+  #who { margin: 0 0 0.5em; overflow-wrap: anywhere; }
+  .presses { display: grid; gap: 0.6em; margin: 1em 0; }
   button {
-    padding: 0.6em 1em;
-    background: var(--press);
-    color: var(--press-ink);
-    border: 1px solid var(--press-edge);
+    padding: 0.7em 1em;
+    color: var(--ink);
     font: inherit;
-    cursor: pointer;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
-  button:hover { background: var(--press-hover); }
-  #said { min-height: 1.5em; margin: 0; overflow-wrap: anywhere; }
+  p { margin: 0.3em 0; overflow-wrap: anywhere; }
+  .quiet { color: var(--quiet); font-size: 12px; }
   .bad { color: var(--wrong); }
+  #said { min-height: 1.5em; margin: 0; }
   [hidden] { display: none !important; }
-  #waits { text-align: left; margin: 1.2em 0; }
-  .waiting { border-top: 1px solid var(--edge); padding: 0.8em 0; }
-  .waiting p { margin: 0.3em 0; overflow-wrap: anywhere; white-space: pre-wrap; }
-  .quiet { color: #889; }
-  .acts { display: flex; gap: 0.5em; flex-wrap: wrap; margin-top: 0.5em; }
+  /* A key asking to be you: its code is what you compare, so it stands out. */
+  .code { font-size: 1.6em; letter-spacing: 0.15em; margin: 0.4em 0; }
+  /* What waits, as the room draws what was said: who, small; what, larger. */
+  #waits { text-align: left; margin: 1em 0; }
+  .waiting { border-top: 1px solid var(--glass-border); padding: 0.8em 0; }
+  .waiting .from { color: var(--quiet); font-size: 12px; }
+  .waiting .says { white-space: pre-wrap; font-size: 15px; line-height: 1.6; }
+  .acts { display: flex; gap: 0.5em; flex-wrap: wrap; margin-top: 0.6em; }
+  .acts button { padding: 0.5em 0.9em; }
 </style>
 </head>
 <body>
-<main>
+<div class="stage"></div>
+<div class="symbol" aria-hidden="true">⏚</div>
+<main class="glass shadow-glass">
   <h1>laye</h1>
   <p id="who"></p>
   <div class="presses" id="in">
-    <button type="button" id="signin">Sign in with the passkey you made here</button>
+    <button type="button" class="glass-thin pressable" id="signin">Sign in with the passkey you made here</button>
   </div>
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
   <section id="waits" hidden></section>
   <div class="presses" id="out" hidden>
-    <button type="button" id="signout">Sign out</button>
+    <button type="button" class="glass-thin pressable" id="signout">Sign out</button>
   </div>
   <p id="said"></p>
 </main>
@@ -120,128 +148,140 @@ function lastError() {
   return all.length ? JSON.stringify(all[all.length - 1]) : '';
 }
 
-async function draw() {
+// "it doesnt respect the user, as if tis sayign, dont trust me"
+// Everything laye is asked for is asked first, and the panel is drawn once
+// with all of it: nothing moves under the person while they reach for it.
+// After that only what they pressed changes.
+const asking = new URLSearchParams(location.search).get('user_code');
+
+async function gather() {
   let me = null;
   try { me = await asked('/laye/passkey/me'); } catch { me = null; }
-  document.getElementById('who').textContent = me ? `${me.person} (${me.level})` : '';
-  document.getElementById('in').hidden = !!me;
-  document.getElementById('out').hidden = !me;
-  document.getElementById('make').hidden = !!me;
-  document.getElementById('waits').hidden = !me;
-  if (!me) await drawMake();
-  else {
-    await drawYes();
-    await drawWaits();
+  if (!me) {
+    const held = JSON.parse(laye.bindings());
+    let providers = [];
+    if (!held.length) {
+      const answer = await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' });
+      providers = ((await answer.json()).providers || []).filter((p) => p.kind === 'redirect');
+    }
+    return { me, held, providers };
+  }
+  const [shown, waits] = await Promise.all([
+    asking
+      ? asked('/laye/device/shown?user_code=' + encodeURIComponent(asking)).catch((e) => ({ error: String(e.message || e) }))
+      : Promise.resolve(null),
+    asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
+  ]);
+  return { me, shown, collected: waits.collected || [], waitsError: waits.error };
+}
+
+function el(tag, text, className) {
+  const made = document.createElement(tag);
+  if (text !== undefined) made.textContent = text;
+  if (className) made.className = className;
+  return made;
+}
+
+function press(label, act) {
+  const b = el('button', label, 'glass-thin pressable');
+  b.type = 'button';
+  b.addEventListener('click', act);
+  return b;
+}
+
+/** Runs what a press does, and draws the panel again once, with what laye says now. */
+async function pressed(does) {
+  try {
+    const words = await does();
+    await draw();
+    if (words) said(words);
+  } catch (e) {
+    sayFailure(e);
   }
 }
 
-// "and as a human i can observe it"
-// What agents said to your agents, held until it is due or you release it.
-async function drawWaits() {
-  const waits = document.getElementById('waits');
-  waits.replaceChildren();
-  const { collected } = await asked('/laye/collected').catch((e) => { said(String(e.message || e), true); return { collected: [] }; });
-  if (!collected.length) {
-    const none = document.createElement('p');
-    none.className = 'quiet';
-    none.textContent = 'Nothing waits for your agents.';
-    waits.append(none);
-    return;
+function makeNodes(got) {
+  if (got.held.length) {
+    const names = got.held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
+    return [press('Make a passkey as ' + names, () => enrol().catch(sayFailure))];
   }
-  for (const one of collected) {
-    const block = document.createElement('div');
-    block.className = 'waiting';
-    const head = document.createElement('p');
-    head.textContent = `For ${one.to}, due ${one.due || 'when you say'}` + (one.held_until ? `, held until ${one.held_until}` : '');
-    block.append(head);
-    for (const w of one.waiting) {
-      const line = document.createElement('p');
-      line.textContent = `${w.from}, ${w.at}${w.edited ? ', changed by you' : ''}:\n${w.says}`;
-      block.append(line);
+  return got.providers.map((p) => press('Prove your ' + p.label + ' account', () => {
+    const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
+    if (p.host_prompt) {
+      const host = prompt(p.host_prompt, p.host_placeholder);
+      if (!host) return;
+      go.set('host', host);
     }
-    if (one.failure) {
-      const failed = document.createElement('p');
-      failed.className = 'bad';
-      failed.textContent = `Not delivered since ${one.failing_since}, ${one.tries} tries: ${one.failure}`;
-      block.append(failed);
-    }
-    const acts = document.createElement('div');
-    acts.className = 'acts';
-    for (const [label, act] of [['Release now', 'release'], ['Later', 'later'], ['Cancel', 'cancel']]) {
-      const press = document.createElement('button');
-      press.type = 'button';
-      press.textContent = label;
-      press.addEventListener('click', async () => {
-        try {
-          await asked('/laye/collected/act', { did: one.did, act, ids: act === 'release' ? one.waiting.map((w) => w.id) : [] });
-          said(act === 'release' ? `Released to ${one.to}.` : act === 'later' ? `Passed to the next delivery.` : `Cancelled.`);
-          await drawWaits();
-        } catch (e) { said(String(e.message || e), true); }
-      });
-      acts.append(press);
-    }
-    block.append(acts);
-    waits.append(block);
-  }
+    location.assign(CEREMONY + '/auth/binding/go?' + go);
+  }));
 }
 
 // A key asking to be yours, by the code it printed. Only your passkey session
 // says yes to it.
-const asking = new URLSearchParams(location.search).get('user_code');
-async function drawYes() {
-  const yes = document.getElementById('yes');
-  yes.replaceChildren();
-  yes.hidden = !asking;
-  if (!asking) return;
-  const shown = await asked('/laye/device/shown?user_code=' + encodeURIComponent(asking))
-    .catch((e) => { said(String(e.message || e), true); return null; });
-  if (!shown) return;
-  const what = document.createElement('p');
-  what.textContent = `${shown.label} asks to be you. Its code is ${shown.user_code}; its key is ${shown.did}.`;
-  yes.append(what);
-  if (shown.said) { said('You said yes to it.'); return; }
-  const press = document.createElement('button');
-  press.type = 'button';
-  press.textContent = 'Yes, ' + shown.label + ' is me';
-  press.addEventListener('click', async () => {
-    try {
+function yesNodes(shown) {
+  if (!shown) return [];
+  if (shown.error) return [el('p', shown.error, 'bad')];
+  const nodes = [
+    el('p', `${shown.label} asks to be you.`),
+    el('p', shown.user_code, 'code'),
+    el('p', shown.did, 'quiet did'),
+  ];
+  if (shown.said) {
+    nodes.push(el('p', 'You said yes to it.', 'quiet'));
+  } else {
+    nodes.push(press('Yes, this key is me', () => pressed(async () => {
       const done = await asked('/laye/device/approve', { user_code: shown.user_code });
-      said(`${done.label} is yours now.`);
-      await drawYes();
-    } catch (e) { said(String(e.message || e), true); }
-  });
-  yes.append(press);
+      return `${done.label} is yours now.`;
+    })));
+  }
+  return nodes;
 }
 
-async function drawMake() {
-  const make = document.getElementById('make');
-  make.replaceChildren();
-  const held = JSON.parse(laye.bindings());
-  if (held.length) {
-    const press = document.createElement('button');
-    press.type = 'button';
-    press.textContent = 'Make a passkey as ' + held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
-    press.addEventListener('click', () => enrol().catch(sayFailure));
-    make.append(press);
-    return;
-  }
-  // No account proven to this browser's key yet: the provider ceremony proves one.
-  const { providers } = await (await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' })).json();
-  for (const p of providers.filter((p) => p.kind === 'redirect')) {
-    const press = document.createElement('button');
-    press.type = 'button';
-    press.textContent = 'Prove your ' + p.label + ' account';
-    press.addEventListener('click', () => {
-      const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
-      if (p.host_prompt) {
-        const host = prompt(p.host_prompt, p.host_placeholder);
-        if (!host) return;
-        go.set('host', host);
-      }
-      location.assign(CEREMONY + '/auth/binding/go?' + go);
-    });
-    make.append(press);
-  }
+// "and as a human i can observe it"
+// What agents said to your agents, held until it is due or you release it.
+function waitsNodes(got) {
+  if (got.waitsError) return [el('p', got.waitsError, 'bad')];
+  if (!got.collected.length) return [el('p', 'Nothing waits for your agents.', 'quiet')];
+  return got.collected.map((one) => {
+    const block = el('div', undefined, 'waiting');
+    block.append(el('p', `For ${one.to}, due ${one.due || 'when you say'}` + (one.held_until ? `, held until ${one.held_until}` : '')));
+    for (const w of one.waiting) {
+      block.append(el('p', `${w.from}, ${w.at}${w.edited ? ', changed by you' : ''}`, 'from'));
+      block.append(el('p', w.says, 'says'));
+    }
+    if (one.failure) block.append(el('p', `Not delivered since ${one.failing_since}, ${one.tries} tries: ${one.failure}`, 'bad'));
+    const acts = el('div', undefined, 'acts');
+    for (const [label, act, words] of [
+      ['Release now', 'release', `Released to ${one.to}.`],
+      ['Later', 'later', 'Passed to the next delivery.'],
+      ['Cancel', 'cancel', 'Cancelled.'],
+    ]) {
+      acts.append(press(label, () => pressed(async () => {
+        await asked('/laye/collected/act', { did: one.did, act, ids: act === 'release' ? one.waiting.map((w) => w.id) : [] });
+        return words;
+      })));
+    }
+    block.append(acts);
+    return block;
+  });
+}
+
+async function draw() {
+  const got = await gather();
+  // Everything below is one synchronous change: the browser draws it once.
+  const signedIn = !!got.me;
+  document.getElementById('who').textContent = signedIn ? `${got.me.person} (${got.me.level})` : '';
+  document.getElementById('in').hidden = signedIn;
+  document.getElementById('out').hidden = !signedIn;
+  document.getElementById('make').hidden = signedIn;
+  document.getElementById('make').replaceChildren(...(signedIn ? [] : makeNodes(got)));
+  const yes = signedIn ? yesNodes(got.shown) : [];
+  document.getElementById('yes').hidden = !yes.length;
+  document.getElementById('yes').replaceChildren(...yes);
+  document.getElementById('waits').hidden = !signedIn;
+  document.getElementById('waits').replaceChildren(...(signedIn ? waitsNodes(got) : []));
+  if (!signedIn && asking) said('Sign in with your passkey to say whether this key is you.');
+  document.querySelector('main').classList.add('drawn');
 }
 
 async function cameBack(ticket) {
@@ -342,7 +382,7 @@ async function signIn() {
 // holds no passkey of laye's yet: said as that, not as a failure.
 const cancelled = (e) => e instanceof Error && e.name === 'NotAllowedError';
 const sayFailure = (e) => said(cancelled(e)
-  ? 'No passkey answered. If you have none here yet, prove an account below and make one.'
+  ? 'No passkey answered. If you have not made one here yet, prove an account below and make it; then sign in.'
   : String(e.message || e), true);
 document.getElementById('signin').addEventListener('click', () => signIn().catch(sayFailure));
 document.getElementById('signout').addEventListener('click', async () => {
@@ -362,6 +402,7 @@ try {
   await draw();
 } catch (e) {
   said(String(e.message || e), true);
+  document.querySelector('main').classList.add('drawn');
 }
 </script>
 </body>

@@ -603,15 +603,26 @@ fn person_page(inner: &Inner) -> Response<Body> {
     resp
 }
 
-/// laye's wasm and the JS that loads it, from laye-web.
+/// What vitreous ships (its package.json files): the glass laye's pages wear.
+const VITREOUS: [&str; 6] = [
+    "vitreous/vitreous.css",
+    "vitreous/glass.css",
+    "vitreous/shadow.css",
+    "vitreous/motion.css",
+    "vitreous/hover.css",
+    "vitreous/click.css",
+];
+
+/// laye's wasm, the JS that loads it, and vitreous's stylesheets, from laye-web.
 fn web_file(inner: &Inner, file: &str) -> Response<Body> {
     let kind = match file {
         "laye_p2p.js" => "text/javascript",
         "laye_p2p_bg.wasm" => "application/wasm",
+        _ if VITREOUS.contains(&file) => "text/css",
         _ => {
             return said(
                 StatusCode::NOT_FOUND,
-                "laye serves its wasm and its JS, and nothing else here",
+                "laye serves its wasm, its JS and vitreous's stylesheets, and nothing else here",
             );
         }
     };
