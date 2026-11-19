@@ -131,6 +131,17 @@
   .door-said { margin: 0; color: var(--door-print); white-space: pre-wrap; overflow-wrap: anywhere; }
   .door-row { display: flex; gap: 8px; }
   .door-row .door-press { flex: 1; }
+  .door-invited { align-items: baseline; justify-content: space-between; }
+  .door-provider.door-provider-picked { background: var(--door-well-glass); border-color: var(--door-line-lit); }
+  .door-provider.door-provider-picked svg { filter: saturate(1); opacity: 1; }
+  /* The door's etched field. */
+  .door-input {
+    font: inherit; font-size: 13px; width: 100%; box-sizing: border-box; padding: 9px 10px;
+    color: var(--door-print); background: var(--door-well-glass);
+    border: 1px solid var(--door-line-lit); border-radius: 12px;
+  }
+  .door-input::placeholder { color: var(--door-text-dim); }
+  .door-input:focus { outline: none; border-color: #1d7a4c; }
 
   @media (max-width: 768px) {
     header { position: static; padding-top: 2rem; }
@@ -304,7 +315,21 @@ async function gather() {
       : Promise.resolve(null),
     asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
   ]);
-  return { me, shown, collected: waits.collected || [], waitsError: waits.error };
+  // A root's invitations, and the ways in an invited person may prove an account.
+  let invites = null;
+  let providers = [];
+  if (me.level === 'ROOT') {
+    const [held, offered] = await Promise.all([
+      asked('/laye/invitations').catch((e) => ({ error: String(e.message || e), invitations: [] })),
+      fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' }).then((a) => (a.ok ? a.json() : {})).catch(() => ({})),
+    ]);
+    invites = held;
+    providers = (offered.providers || []).filter((p) => p.kind === 'redirect');
+  }
+  return {
+    me, shown, collected: waits.collected || [], waitsError: waits.error,
+    invitations: invites && (invites.invitations || []), invitesError: invites && invites.error, providers,
+  };
 }
 
 function goProve(p) {
@@ -356,7 +381,73 @@ function signedIn(got) {
     await asked('/laye/passkey/out', {});
     return 'signed out';
   }))];
-  return { middle, right: [...yesNodes(got.shown), ...waitsNodes(got)] };
+  return { middle, right: [...yesNodes(got.shown), ...waitsNodes(got), ...invitesNodes(got)] };
+}
+
+// "the network is invite only"
+// "and i own the invites"
+// "and i can kick anyone off for whatever reason"
+// A root's invitations: who may come in, by the account they prove, picked
+// by its provider's mark as the door picks a way in.
+function invitesNodes(got) {
+  if (got.invitations === null || got.invitations === undefined) return [];
+  const nodes = [el('p', 'invites', 'door-note')];
+  if (got.invitesError) nodes.push(el('p', got.invitesError, 'door-note'));
+  for (const inv of got.invitations.filter((i) => i.state === 'open' || i.state === 'accepted')) {
+    const kick = inv.state === 'accepted';
+    const who = inv.accounts.map((a) => a.account).join(' or ');
+    const row = el('div', undefined, 'door-row door-invited');
+    row.append(el('p', kick ? `${who} · in` : `${who} · invited`, 'door-said'));
+    const withdraw = act(kick ? 'kick' : 'cancel', () => {
+      // Kicked and cancelled are not taken back: each is asked twice.
+      const sure = el('div', undefined, 'door-row');
+      const keep = button('keep', 'door-press', () => sure.replaceWith(row));
+      sure.append(button(kick ? 'yes, kick' : 'yes, cancel', 'door-press', () => pressed(async () => {
+        await asked('/laye/invitations/withdraw', { id: inv.id });
+        return kick ? `${who} is out` : 'cancelled';
+      })), keep);
+      row.replaceWith(sure);
+      keep.focus();
+    });
+    row.append(withdraw);
+    nodes.push(row);
+  }
+  // Which provider: its mark, picked. Their account there: one field.
+  let picked = null;
+  const ways = el('div', undefined, 'door-providers');
+  for (const p of got.providers) {
+    const b = button('', 'door-provider', () => {
+      picked = p.id;
+      for (const each of ways.children) each.classList.toggle('door-provider-picked', each === b);
+      account.placeholder = `their ${p.label} account`;
+      account.focus();
+    });
+    const drawn = mark(p.id);
+    if (drawn) b.append(drawn); else b.textContent = p.label.slice(0, 1);
+    b.title = p.label;
+    b.setAttribute('aria-label', `Invite by ${p.label} account`);
+    ways.append(b);
+  }
+  const account = el('input', undefined, 'door-input');
+  account.placeholder = 'pick how they sign in';
+  account.autocomplete = 'off';
+  account.spellcheck = false;
+  const invite = button('invite', 'door-press', () => {
+    const who = account.value.trim();
+    if (!picked || !who) { say(picked ? 'their account?' : 'pick how they sign in'); return; }
+    pressed(async () => {
+      await asked('/laye/invitations', { accounts: [{ provider: picked, account: who }] });
+      return `invited ${who}`;
+    });
+  });
+  account.addEventListener('keydown', (e) => { if (e.key === 'Enter') invite.click(); });
+  nodes.push(ways, account, invite);
+  return nodes;
+}
+
+/** A quiet press beside what it acts on. */
+function act(label, onPress) {
+  return button(label, 'door-skip', onPress);
 }
 
 // A key asking to be yours, by the code it printed. Only your passkey session

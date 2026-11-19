@@ -868,8 +868,11 @@ fn as_laye(
         "/auth/introspect" if post => laye.introspect(body),
         "/laye/roots" if post => laye.roots(body),
         "/laye/invitations" | "/laye/invitations/withdraw" => {
+            // "and i own the invites"
+            // A root's own key, or a root in its passkey session at laye's page.
             let signer = match signer_of(inner, parts) {
-                Ok(signer) => signer,
+                Ok(Some(signer)) => Some(signer),
+                Ok(None) => person_asking(inner, parts).ok().map(|(person, _)| person),
                 Err(why) => return Some(said(StatusCode::UNAUTHORIZED, why)),
             };
             match (parts.uri.path(), get, post) {
