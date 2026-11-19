@@ -13,6 +13,7 @@
 
 pub mod a2a_card;
 pub mod a2a_spoken;
+pub mod collected;
 pub mod devices;
 pub mod door;
 pub mod etcd;
@@ -196,6 +197,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     });
     let run = tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETRY);
+        let mut ticks: u64 = 0;
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -217,7 +219,16 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                         }
                     });
                 }
-                _ = tick.tick() => hand_over(&inner).await,
+                _ = tick.tick() => {
+                    hand_over(&inner).await;
+                    ticks += 1;
+                    if ticks.is_multiple_of(60) && let Some(keys) = &inner.passkeys {
+                        let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
+                        for why in held.deliver_due(now()).await {
+                            eprintln!("laye-front: what was collected and due was not delivered: {why}");
+                        }
+                    }
+                }
             }
         }
     });
@@ -420,6 +431,32 @@ async fn as_person(
             };
             return Some(json(code(status), body.to_string()));
         }
+        "/laye/collected" | "/laye/collected/act" => {
+            // "and as a human i can dial it"
+            // What waits is the person's to see and to act on, in their
+            // passkey session: no key does either.
+            let (person, level) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let held = collected::Collections {
+                etcd: &keys.etcd,
+                laye: &inner.did,
+            };
+            let (status, body) = if path == "/laye/collected" && get {
+                collected_for(&held, &person, &level).await
+            } else if path == "/laye/collected/act" && post {
+                act_on(&held, &person, &level, body).await
+            } else {
+                return None;
+            };
+            return Some(json(code(status), body.to_string()));
+        }
         "/laye/passkey/out" if post => {
             let mut resp = json(StatusCode::OK, "{}");
             if let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(None)) {
@@ -439,6 +476,98 @@ async fn as_person(
         resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
     }
     Some(resp)
+}
+
+/// Whether `person`, at `level`, sees and acts on what waits for `did`: the
+/// agent is theirs, or they are a root.
+async fn theirs(held: &collected::Collections<'_>, did: &str, person: &str, level: &str) -> bool {
+    level == issuer::ROOT
+        || held
+            .person_of_agent(did)
+            .await
+            .is_ok_and(|whose| whose == person)
+}
+
+/// What waits for the agents a person sees.
+async fn collected_for(
+    held: &collected::Collections<'_>,
+    person: &str,
+    level: &str,
+) -> (u16, serde_json::Value) {
+    let all = match held.all().await {
+        Ok(all) => all,
+        Err(why) => return (503, serde_json::json!({ "error": why })),
+    };
+    let mut seen = Vec::new();
+    for one in all {
+        if (!one.waiting.is_empty() || !one.held_until.is_empty())
+            && theirs(held, &one.did, person, level).await
+        {
+            seen.push(one);
+        }
+    }
+    (200, serde_json::json!({ "collected": seen }))
+}
+
+/// A person's act on what waits for one agent:
+/// {"did", "act": release|hold|later|cancel|edit, "ids", "says", "until", "id"}.
+async fn act_on(
+    held: &collected::Collections<'_>,
+    person: &str,
+    level: &str,
+    body: &[u8],
+) -> (u16, serde_json::Value) {
+    #[derive(Deserialize)]
+    struct Asked {
+        did: String,
+        act: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        says: Option<String>,
+        #[serde(default)]
+        until: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+    }
+    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let asked: Asked = match serde_json::from_slice(body) {
+        Ok(asked) => asked,
+        Err(e) => return refused(400, format!("an act is {{\"did\", \"act\"}}: {e}")),
+    };
+    if !theirs(held, &asked.did, person, level).await {
+        return refused(
+            403,
+            format!("what waits for {} is not {person}'s to act on", asked.did),
+        );
+    }
+    let says = asked.says.filter(|s| !s.trim().is_empty());
+    let act = match asked.act.as_str() {
+        "release" => collected::Act::Release {
+            ids: asked.ids,
+            says,
+        },
+        "later" => collected::Act::Later,
+        "cancel" => collected::Act::Cancel { id: asked.id },
+        "hold" => match asked.until.as_deref().map(collected::secs) {
+            Some(until) if until > 0 => collected::Act::Hold { until },
+            _ => return refused(400, "hold takes until, as RFC 3339".into()),
+        },
+        "edit" => match (asked.id, says) {
+            (Some(id), Some(says)) => collected::Act::Edit { id, says },
+            _ => return refused(400, "edit takes the id and what it says".into()),
+        },
+        other => {
+            return refused(
+                400,
+                format!("{other:?} is no act: release, hold, later, cancel, edit"),
+            );
+        }
+    };
+    match held.act(&asked.did, &act, person, now()).await {
+        Ok(after) => (200, serde_json::json!(after)),
+        Err(why) => refused(409, why),
+    }
 }
 
 fn code(status: u16) -> StatusCode {
@@ -658,6 +787,14 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     // to log in, again and again.
     let headers = passed_on(&parts);
 
+    // What an agent says to an agent, its Task, and the row it is delivered
+    // on are laye's when it keeps passkeys: QNTX up or not.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && let Some(answered) = as_collections(inner, keys, &parts, &body, subject, &headers).await
+    {
+        return answered;
+    }
+
     if let Some(upgrading) = upgrading {
         return carry_upgrade(
             inner,
@@ -767,6 +904,232 @@ async fn at_names(
     } else {
         said(status, words)
     }
+}
+
+/// A2A 1.0 over HTTP+JSON, beneath a tenant: `/a2a/<Name>/<rest>`.
+fn at_a_name(path: &str) -> Option<(&str, &str)> {
+    let rest = path.strip_prefix("/a2a/")?;
+    let (name, rest) = rest.split_once('/')?;
+    (!name.is_empty() && !name.contains('.')).then_some((name, rest))
+}
+
+/// The agent holding a name at laye: its DID and the name as it holds it.
+async fn named(etcd: &etcd::Etcd, name: &str) -> Result<Option<(String, String)>, String> {
+    let name = name.replace("%20", " ");
+    let Some(kv) = etcd
+        .get(&format!("/names/{}", name.to_ascii_lowercase()))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let held: serde_json::Value = serde_json::from_slice(&kv.value)
+        .map_err(|e| format!("the name {name} does not read: {e}"))?;
+    Ok(held.get("did").and_then(|d| d.as_str()).map(|did| {
+        let called = held
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or(&name)
+            .to_string();
+        (did.to_string(), called)
+    }))
+}
+
+/// A Task laye answers with, in A2A 1.0's ProtoJSON.
+fn task_json(t: &collected::Tasked) -> serde_json::Value {
+    serde_json::json!({
+        "id": t.id,
+        "contextId": t.context,
+        "status": {
+            "state": t.state,
+            "message": {
+                "messageId": format!("{}-said", t.id),
+                "contextId": t.context,
+                "taskId": t.id,
+                "role": "ROLE_AGENT",
+                "parts": [{ "text": t.says }],
+            },
+        },
+    })
+}
+
+/// What an agent says to a name, the Task it is, the row of the person asking,
+/// and a delivery's whole: laye's, from what it keeps. None is not laye's to
+/// answer, and goes on to QNTX.
+async fn as_collections(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    parts: &hyper::http::request::Parts,
+    body: &Bytes,
+    subject: &str,
+    headers: &[(String, String)],
+) -> Option<Response<Body>> {
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let path = parts.uri.path();
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let failed = |why: String| Some(said(StatusCode::SERVICE_UNAVAILABLE, why));
+
+    if let Some((name, rest)) = at_a_name(path) {
+        if post && rest == "message:send" {
+            let (did, called) = match named(&keys.etcd, name).await {
+                Ok(Some(held)) => held,
+                Ok(None) => return None,
+                Err(why) => return failed(why),
+            };
+            let Ok(send) = serde_json::from_slice::<a2a::SendMessageRequest>(body) else {
+                return None;
+            };
+            let says: Vec<&str> = send
+                .message
+                .parts
+                .iter()
+                .filter_map(|p| p.as_text())
+                .collect();
+            if says.is_empty() {
+                return Some(said(
+                    StatusCode::BAD_REQUEST,
+                    "what is said to a name crosses the row as text, and this said none",
+                ));
+            }
+            let from = match keys.etcd.get(&format!("/named/{subject}")).await {
+                Ok(Some(kv)) => {
+                    let at = String::from_utf8_lossy(&kv.value).into_owned();
+                    let name = at.strip_prefix("/names/").unwrap_or(&at).to_string();
+                    named(&keys.etcd, &name)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map_or(name, |(_, n)| n)
+                }
+                Ok(None) => subject.to_string(),
+                Err(why) => return failed(why),
+            };
+            let context = send
+                .message
+                .context_id
+                .clone()
+                .unwrap_or_else(a2a::new_context_id);
+            return match held
+                .collect(
+                    &did,
+                    &called,
+                    subject,
+                    &from,
+                    &says.join("\n"),
+                    &context,
+                    now(),
+                )
+                .await
+            {
+                Ok(task) => Some(json(
+                    StatusCode::OK,
+                    serde_json::json!({ "task": task_json(&task) }).to_string(),
+                )),
+                Err(why) => failed(why),
+            };
+        }
+        if get && let Some(id) = rest.strip_prefix("tasks/") {
+            return match held.task(id).await {
+                Ok(Some(task)) => Some(json(StatusCode::OK, task_json(&task).to_string())),
+                Ok(None) => None,
+                Err(why) => failed(why),
+            };
+        }
+        return None;
+    }
+
+    if get && let Some(id) = path.strip_prefix("/am/statusline/") {
+        let person = held.person_of_key(subject).await.ok().flatten();
+        return match held.detail(id, subject, person.as_deref()).await {
+            Ok(Some(detail)) => Some(json(StatusCode::OK, detail.to_string())),
+            Ok(None) => None,
+            Err(why) => failed(why),
+        };
+    }
+
+    if get && path == "/am/statusline" {
+        let person = match held.person_of_key(subject).await {
+            Ok(Some(person)) => person,
+            Ok(None) => return None,
+            Err(why) => return failed(why),
+        };
+        let items = match held.row(&person, now()).await {
+            Ok(items) => items,
+            Err(why) => return failed(why),
+        };
+        let query = issuer::form(parts.uri.query().unwrap_or_default());
+        let format = query.get("format").map_or("", String::as_str).to_string();
+        let full = parts
+            .uri
+            .path_and_query()
+            .map_or(path, |p| p.as_str())
+            .to_string();
+        let qntx = match forward(
+            inner,
+            parts.version,
+            &parts.method,
+            &full,
+            headers,
+            Some(subject),
+            Bytes::new(),
+        )
+        .await
+        {
+            Ok(resp) if resp.status() == StatusCode::OK => {
+                resp.into_body().collect().await.ok().map(|b| b.to_bytes())
+            }
+            _ => None,
+        };
+        return Some(row_with(&format, qntx, &items));
+    }
+    None
+}
+
+/// QNTX's row with laye's items on it, or laye's alone when QNTX did not
+/// answer: as JSON, or drawn as the row is (QNTX statusline renderLine).
+fn row_with(format: &str, qntx: Option<Bytes>, items: &[serde_json::Value]) -> Response<Body> {
+    if format == "json" {
+        let mut row = qntx
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .unwrap_or_else(|| serde_json::json!({ "items": [], "deploys": [] }));
+        if let Some(all) = row.get_mut("items").and_then(|i| i.as_array_mut()) {
+            all.extend(items.iter().cloned());
+        }
+        return json(StatusCode::OK, row.to_string());
+    }
+    let mut line = qntx
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    for item in items {
+        let text = |f: &str| {
+            item.get(f)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if !line.is_empty() {
+            line.push_str("  ");
+        }
+        let drawn = format!(
+            "{} {}",
+            text("name"),
+            text("note").replace(['\n', '#'], " ")
+        );
+        if format == "tmux" {
+            line.push_str(&format!("#[range=user|{}]{drawn}#[norange]", text("id")));
+        } else {
+            line.push_str(&drawn);
+        }
+    }
+    let mut resp = said(StatusCode::OK, line);
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    resp
 }
 
 /// The request's headers as QNTX is handed them: a session's own signature

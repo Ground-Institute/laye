@@ -55,6 +55,11 @@
   #said { min-height: 1.5em; margin: 0; overflow-wrap: anywhere; }
   .bad { color: var(--wrong); }
   [hidden] { display: none !important; }
+  #waits { text-align: left; margin: 1.2em 0; }
+  .waiting { border-top: 1px solid var(--edge); padding: 0.8em 0; }
+  .waiting p { margin: 0.3em 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .quiet { color: #889; }
+  .acts { display: flex; gap: 0.5em; flex-wrap: wrap; margin-top: 0.5em; }
 </style>
 </head>
 <body>
@@ -66,6 +71,7 @@
   </div>
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
+  <section id="waits" hidden></section>
   <div class="presses" id="out" hidden>
     <button type="button" id="signout">Sign out</button>
   </div>
@@ -121,8 +127,62 @@ async function draw() {
   document.getElementById('in').hidden = !!me;
   document.getElementById('out').hidden = !me;
   document.getElementById('make').hidden = !!me;
+  document.getElementById('waits').hidden = !me;
   if (!me) await drawMake();
-  else await drawYes();
+  else {
+    await drawYes();
+    await drawWaits();
+  }
+}
+
+// "and as a human i can observe it"
+// What agents said to your agents, held until it is due or you release it.
+async function drawWaits() {
+  const waits = document.getElementById('waits');
+  waits.replaceChildren();
+  const { collected } = await asked('/laye/collected').catch((e) => { said(String(e.message || e), true); return { collected: [] }; });
+  if (!collected.length) {
+    const none = document.createElement('p');
+    none.className = 'quiet';
+    none.textContent = 'Nothing waits for your agents.';
+    waits.append(none);
+    return;
+  }
+  for (const one of collected) {
+    const block = document.createElement('div');
+    block.className = 'waiting';
+    const head = document.createElement('p');
+    head.textContent = `For ${one.to}, due ${one.due || 'when you say'}` + (one.held_until ? `, held until ${one.held_until}` : '');
+    block.append(head);
+    for (const w of one.waiting) {
+      const line = document.createElement('p');
+      line.textContent = `${w.from}, ${w.at}${w.edited ? ', changed by you' : ''}:\n${w.says}`;
+      block.append(line);
+    }
+    if (one.failure) {
+      const failed = document.createElement('p');
+      failed.className = 'bad';
+      failed.textContent = `Not delivered since ${one.failing_since}, ${one.tries} tries: ${one.failure}`;
+      block.append(failed);
+    }
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+    for (const [label, act] of [['Release now', 'release'], ['Later', 'later'], ['Cancel', 'cancel']]) {
+      const press = document.createElement('button');
+      press.type = 'button';
+      press.textContent = label;
+      press.addEventListener('click', async () => {
+        try {
+          await asked('/laye/collected/act', { did: one.did, act, ids: act === 'release' ? one.waiting.map((w) => w.id) : [] });
+          said(act === 'release' ? `Released to ${one.to}.` : act === 'later' ? `Passed to the next delivery.` : `Cancelled.`);
+          await drawWaits();
+        } catch (e) { said(String(e.message || e), true); }
+      });
+      acts.append(press);
+    }
+    block.append(acts);
+    waits.append(block);
+  }
 }
 
 // A key asking to be yours, by the code it printed. Only your passkey session

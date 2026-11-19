@@ -185,7 +185,7 @@ async fn laye(name: &str, etcd: &str, roots: Vec<String>, signers: Vec<String>) 
             listen: "127.0.0.1:0".parse().unwrap(),
             qntx: format!("http://{}", free_addr().await),
             qntx_did: "did:key:z6MkqntxNodeStandsHere".into(),
-            public_origins: vec![AT_RP.into()],
+            public_origins: vec![AT_RP.into(), "https://api.q.example".into()],
             held_at: dir.join("held.jsonl"),
             root_identities: roots,
             binding_signers: signers,
@@ -787,4 +787,220 @@ async fn a_key_is_a_persons_once_they_say_yes_with_their_passkey() {
     )
     .await;
     assert_eq!(refused.status, 403, "{}", refused.text);
+}
+
+async fn signed_get(front: SocketAddr, path: &str, by: &Keypair) -> Answer {
+    signed_ask(front, "GET", path, by, "").await
+}
+
+async fn signed_ask(
+    front: SocketAddr,
+    method: &str,
+    path: &str,
+    by: &Keypair,
+    body: &str,
+) -> Answer {
+    let stream = tokio::net::TcpStream::connect(front).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("host", "api.q.example")
+        .header("content-type", "application/json")
+        .header("authorization", signed(by))
+        .body(Full::new(Bytes::from(body.to_string())))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    let status = resp.status().as_u16();
+    let text =
+        String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).into_owned();
+    Answer {
+        status,
+        body: serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
+        text,
+        cookie: None,
+    }
+}
+
+/// `P2P2A2A_A_001_01`, with no QNTX answering at all.
+///
+/// "i want laye to also be tht A2A layer collections get placed into and be added or removed from and be released."
+///
+/// One session says something to another by name. It is collected, and waits;
+/// the person releases it in their passkey session; it stands on the row their
+/// key polls; the session it was said to takes it, and the Task completes.
+#[tokio::test(flavor = "multi_thread")]
+async fn one_session_says_to_another_through_laye_and_it_arrives() {
+    let etcd = etcd("arrives").await;
+    let browser = laye_me::fresh();
+    let front = laye("arrives-q", &etcd.at, vec![did(&browser)], Vec::new()).await;
+
+    // The person, in their passkey session.
+    let mut passkey = Authenticator::new();
+    assert_eq!(
+        enrol(front, AT_RP, &browser, &[], &passkey).await.status,
+        200
+    );
+    let session = sign_in(front, AT_RP, &mut passkey).await.cookie.unwrap();
+
+    // ~/.qntx/key, said yes to.
+    let qntx_key = laye_me::fresh();
+    let asked = form(
+        front,
+        "/laye/device",
+        "",
+        &format!("label=laptop&did={}", did(&qntx_key).replace(':', "%3A")),
+    )
+    .await;
+    let yes = json!({ "user_code": asked.body["user_code"] }).to_string();
+    let said_yes = ask(front, RP, "POST", "/laye/device/approve", &session, &yes)
+        .await
+        .unwrap();
+    assert_eq!(said_yes.status, 200, "{}", said_yes.text);
+
+    // Two sessions, admitted by it, each named.
+    let (alder, birch) = (laye_me::fresh(), laye_me::fresh());
+    for (key, name) in [(&alder, "Alder"), (&birch, "Birch")] {
+        let admitted = form(
+            front,
+            "/auth/admit",
+            &signed(&qntx_key),
+            &format!("did={}&label={name}", did(key).replace(':', "%3A")),
+        )
+        .await;
+        assert_eq!(admitted.status, 200, "{}", admitted.text);
+        let named = signed_ask(
+            front,
+            "POST",
+            "/i/name",
+            key,
+            &json!({ "name": name, "given": "itself" }).to_string(),
+        )
+        .await;
+        assert_eq!(named.status, 200, "{}", named.text);
+    }
+
+    // Alder says something to Birch, as ground say does.
+    let send = json!({
+        "message": { "messageId": "ground-say-1", "role": "ROLE_USER", "parts": [{ "text": "the tide is in" }] },
+        "configuration": { "returnImmediately": true },
+    });
+    let sent = signed_ask(
+        front,
+        "POST",
+        "/a2a/Birch/message:send",
+        &alder,
+        &send.to_string(),
+    )
+    .await;
+    assert_eq!(sent.status, 200, "{}", sent.text);
+    let task = sent.body["task"]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        sent.body["task"]["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{}",
+        sent.text
+    );
+
+    // As ground heard asks.
+    let heard = signed_get(front, &format!("/a2a/Birch/tasks/{task}"), &alder).await;
+    assert_eq!(
+        heard.body["status"]["state"], "TASK_STATE_INPUT_REQUIRED",
+        "{}",
+        heard.text
+    );
+
+    // It waits, for Birch, from Alder; nothing stands on the row yet.
+    let waits = ask(front, RP, "GET", "/laye/collected", &session, "")
+        .await
+        .unwrap();
+    assert_eq!(waits.status, 200, "{}", waits.text);
+    let one = &waits.body["collected"][0];
+    assert_eq!(one["to"], "Birch");
+    assert_eq!(one["waiting"][0]["from"], "Alder");
+    assert_eq!(one["waiting"][0]["from_did"], did(&alder));
+    assert_eq!(one["waiting"][0]["says"], "the tide is in");
+    let row = signed_get(front, "/am/statusline?format=json", &qntx_key).await;
+    assert_eq!(row.body["items"], json!([]), "{}", row.text);
+
+    // A key never releases: only the person's passkey session.
+    let by_key = signed_ask(
+        front,
+        "POST",
+        "/laye/collected/act",
+        &qntx_key,
+        &json!({ "did": did(&birch), "act": "release" }).to_string(),
+    )
+    .await;
+    assert_ne!(by_key.status, 200, "{}", by_key.text);
+    let released = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/collected/act",
+        &session,
+        &json!({ "did": did(&birch), "act": "release" }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(released.status, 200, "{}", released.text);
+    assert_eq!(released.body["waiting"], json!([]));
+
+    // On the person's row, drawn for tmux too, with its id.
+    let row = signed_get(front, "/am/statusline?format=json", &qntx_key).await;
+    let item = &row.body["items"][0];
+    let id = item["id"].as_str().unwrap().to_string();
+    assert!(id.len() <= 15, "{id} is longer than a tmux range holds");
+    assert!(
+        item["note"].as_str().unwrap().contains("the tide is in"),
+        "{}",
+        row.text
+    );
+    let drawn = signed_get(front, "/am/statusline?format=tmux", &qntx_key).await;
+    assert!(
+        drawn.text.contains(&format!("#[range=user|{id}]")),
+        "{}",
+        drawn.text
+    );
+    let heard = signed_get(front, &format!("/a2a/Birch/tasks/{task}"), &alder).await;
+    assert_eq!(
+        heard.body["status"]["state"], "TASK_STATE_WORKING",
+        "{}",
+        heard.text
+    );
+
+    // Alder is the same person's, not Birch: it is answered the whole, as a
+    // ground taking it off the row is (QNTX a2a_named.go), and that is not
+    // Birch receiving it.
+    let not_birch = signed_get(front, &format!("/am/statusline/{id}"), &alder).await;
+    assert_eq!(not_birch.status, 200, "{}", not_birch.text);
+    let heard = signed_get(front, &format!("/a2a/Birch/tasks/{task}"), &alder).await;
+    assert_eq!(
+        heard.body["status"]["state"], "TASK_STATE_WORKING",
+        "{}",
+        heard.text
+    );
+    // Someone else's key is answered nothing of it.
+    let stranger = signed_get(front, &format!("/am/statusline/{id}"), &laye_me::fresh()).await;
+    assert_ne!(stranger.status, 200, "{}", stranger.text);
+
+    // Birch asks for the whole of it, as sky does handing it over: received.
+    let whole = signed_get(front, &format!("/am/statusline/{id}"), &birch).await;
+    assert_eq!(whole.status, 200, "{}", whole.text);
+    assert!(
+        whole.body["note"]
+            .as_str()
+            .unwrap()
+            .contains("the tide is in")
+    );
+    let heard = signed_get(front, &format!("/a2a/Birch/tasks/{task}"), &alder).await;
+    assert_eq!(
+        heard.body["status"]["state"], "TASK_STATE_COMPLETED",
+        "{}",
+        heard.text
+    );
+    let row = signed_get(front, "/am/statusline?format=json", &qntx_key).await;
+    assert_eq!(row.body["items"], json!([]), "{}", row.text);
 }
