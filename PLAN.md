@@ -61,6 +61,12 @@ Of what was said on 2026-11-16:
 
 "well, like, even collections and the idea of approval packs, it would also move to laye"
 
+"i really like having the island be available to both the existing QNTX App and laye now as well,"
+
+"i feel like there is a good argument to put the island into its own repo, and a generalised thing all other projects of mine use that would be using it,"
+
+"and the same really goes for everything else that laye app would be using from QNTX-App"
+
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
@@ -79,8 +85,11 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 - [ ] `P2P2A2A_A_003_04` A root verifies an ID in person before inviting: ID Verifier – Display Only, wanted in laye's invite flow. The system shows the verified ID on the root's phone; laye receives none of it.
   Proof: a root taps an invitee's iPhone, sees the ID Wallet verified, and invites; laye's store holds no ID data afterwards.
 
-- [ ] `P2P2A2A_A_003_05` The island is laye's. What waits on a person stands on the phone as a Live Activity (ADR-060), and laye holds it: the widget, the Live Activity push tokens, and the press. QNTX-App's `island/` moves into laye, with its CI (`island-tests`, `island-wall`, `island-draw`), and leaves QNTX-App. A node says what waits, as `server/phones.go` says it now; it says it to laye, not to a phone.
-  Proof: with QNTX-App not installed, an approval pack waiting on a person stands on the island from laye, and a press on it answers the node.
+- [ ] `P2P2A2A_A_003_05` The island is its own repo, used by QNTX-App, laye, and any other app. What waits on a person stands on the phone as a Live Activity (ADR-060). QNTX-App's `island/` moves there with its CI (`island-tests`, `island-wall`, `island-draw`); each app takes it in, as `laye.ground.institute.island` in laye. Collections and approval packs (`_06`) are laye's, and laye starts what waits on laye's island.
+  Proof: QNTX-App and laye each build the island from that repo, with nothing of it copied into either; an approval pack waiting on a person stands on laye's island, and a press on it answers the node.
+
+- [ ] `P2P2A2A_A_003_09` Everything laye takes from QNTX-App lives in a repo of its own, generalised, which QNTX-App, laye and other apps use: the island, `sheet/`, signing against a profile (`ios-project.py`), registering App IDs and profiles (`apple.py`), the TestFlight upload, and waiting until testers can install (`delivered.py`). Neither app keeps a copy.
+  Proof: QNTX-App's and laye's repos hold none of these files, both reach TestFlight, and a change in the shared repo reaches both.
 
 - [ ] `P2P2A2A_A_003_06` laye is the A2A layer collections are placed into. What an agent says to an agent is held by laye for its receiver; a person adds to it, removes from it, and releases it. Collections and approval packs move from QNTX into laye (QNTX `server/collected.go` and the packs); a node places into them and is answered.
   Proof: one session says something to another through laye; it is held, a person releases it from the phone, and the other session receives it. A node's approval is a pack in laye, answered from the phone, and the node receives the answer.

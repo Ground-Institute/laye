@@ -45,16 +45,18 @@ origins = ["https://laye.ground.institute", "laye://door"]
 - `Info.ios.plist` answers export compliance in the bundle, as QNTX-App's does.
 - The Tauri, opener and deep-link versions are the ones QNTX-App pins.
 
-Both apps could use the following from one place:
+These move into a repo of their own that both apps use (`PLAN.md`, `P2P2A2A_A_003_09`):
 
+- The island: QNTX-App's `island/` and its CI.
 - `sheet/`, which is the same code in both apps.
 - The generic steps of QNTX-App's TestFlight pipeline (`ci/testflight.nix`):
-  - signing against a profile instead of an account (`.github/scripts/ios-project.py`, minus its island);
+  - signing against a profile instead of an account (`.github/scripts/ios-project.py`);
+  - registering App IDs and the profile (`ci/apple.py` here);
   - uploading with `xcrun altool --upload-package`, which names the app by `APPLE_APP_ID`;
   - waiting until App Store Connect says testers can install the build (`.github/scripts/delivered.py`).
 
   Its other steps are QNTX's own: checking out QNTX and QNTX-Web, taking the
-  version from QNTX's newest tag, and the island and share extensions.
+  version from QNTX's newest tag, and the share extension.
 
 ## Apple
 
