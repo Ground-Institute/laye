@@ -81,6 +81,7 @@ async fn world(name: &str) -> World {
             }],
             invitations_at: dir.join("invitations.jsonl"),
             ceremony_at: "https://node.example".into(),
+            names: None,
         },
         laye_me::fresh(),
     )

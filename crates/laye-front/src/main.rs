@@ -21,6 +21,8 @@ struct File {
     #[serde(default)]
     nodes: Vec<laye_front::Node>,
     qntx: Qntx,
+    #[serde(default)]
+    names: Option<laye_front::NamesAt>,
 }
 
 #[derive(Deserialize)]
@@ -92,6 +94,7 @@ async fn main() {
             nodes: file.nodes,
             invitations_at: file.invitations,
             ceremony_at: file.ceremony.trim_end_matches('/').to_string(),
+            names: file.names,
         },
         key,
     )

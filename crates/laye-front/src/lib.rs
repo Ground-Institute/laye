@@ -14,9 +14,11 @@
 pub mod a2a_card;
 pub mod a2a_spoken;
 pub mod door;
+pub mod etcd;
 pub mod invitations;
 mod issuer;
 pub mod jwt;
+pub mod names;
 
 pub use issuer::Node;
 
@@ -80,6 +82,18 @@ pub struct Config {
     /// Where an account proves itself, for laye's login screen: the origin
     /// of the provider ceremony, https://api.q.sbvh.nl.
     pub ceremony_at: String,
+    /// Where laye keeps who is admitted and the names sessions hold. None
+    /// leaves both to QNTX.
+    pub names: Option<NamesAt>,
+}
+
+/// Where names are kept, and whose key admits a session's.
+#[derive(Clone, Debug, Deserialize)]
+pub struct NamesAt {
+    /// etcd, as its clients reach it: http://127.0.0.1:2379.
+    pub etcd: String,
+    /// The did:keys whose signature admits a session's key.
+    pub admitters: Vec<String>,
 }
 
 pub struct Front {
@@ -109,6 +123,7 @@ struct Inner {
     held: Mutex<Vec<Held>>,
     issued: issuer::Issued,
     invitations: invitations::Invitations,
+    names: Option<names::Names>,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -129,11 +144,17 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     let addr = listener
         .local_addr()
         .map_err(|e| laye_peer::error("listen", "laye's address is not known", e.to_string()))?;
+    let client: Client<HttpConnector, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let names = config.names.as_ref().map(|at| names::Names {
+        etcd: etcd::Etcd::new(&at.etcd, client.clone()),
+        admitters: at.admitters.clone(),
+    });
     let inner = Arc::new(Inner {
         config,
         key,
         did: did.clone(),
-        client: Client::builder(TokioExecutor::new()).build_http(),
+        client,
+        names,
         h2c: Client::builder(TokioExecutor::new())
             .http2_only(true)
             .build_http(),
@@ -298,6 +319,15 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         };
     }
 
+    // Who is admitted, and the name a session holds, are laye's when it keeps
+    // names: QNTX up or not.
+    if let Some(names) = &inner.names
+        && parts.method == hyper::Method::POST
+        && matches!(parts.uri.path(), ADMIT_PATH | NAME_PATH)
+    {
+        return at_names(inner, names, &parts, body).await;
+    }
+
     let presented = parts
         .headers
         .get(hyper::header::AUTHORIZATION)
@@ -324,15 +354,7 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     // and is handed on as it came. Taken away, every request of a person
     // logged in at QNTX reached it as a stranger, and their app asked them
     // to log in, again and again.
-    let headers: Vec<(String, String)> = parts
-        .headers
-        .iter()
-        .filter(|(name, value)| {
-            *name != hyper::header::AUTHORIZATION
-                || !value.to_str().is_ok_and(|v| v.starts_with(SIGNED))
-        })
-        .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
-        .collect();
+    let headers = passed_on(&parts);
 
     if let Some(upgrading) = upgrading {
         return carry_upgrade(
@@ -372,6 +394,86 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
             }
         }
     }
+}
+
+/// Where a key the person said yes to admits a session's key (QNTX's
+/// `/auth/admit`).
+const ADMIT_PATH: &str = "/auth/admit";
+/// Where a session names itself (QNTX's `i name`).
+const NAME_PATH: &str = "/i/name";
+
+/// An admission or a naming, answered by laye from what it keeps. What laye
+/// gave is then handed to QNTX as every kept request is, so QNTX knows it too.
+async fn at_names(
+    inner: &Inner,
+    names: &names::Names,
+    parts: &hyper::http::request::Parts,
+    body: Bytes,
+) -> Response<Body> {
+    let signer = match signer_of(inner, parts) {
+        Ok(Some(signer)) => signer,
+        Ok(None) => {
+            return said(
+                StatusCode::UNAUTHORIZED,
+                "laye answers this to a key signing as itself",
+            );
+        }
+        Err(why) => return said(StatusCode::UNAUTHORIZED, why),
+    };
+    let path = parts.uri.path();
+    let (status, words) = if path == ADMIT_PATH {
+        let asked = issuer::form(&String::from_utf8_lossy(&body));
+        let field = |name: &str| asked.get(name).map_or("", |v| v.trim());
+        names
+            .admit(&signer, field("did"), field("label"), now())
+            .await
+    } else {
+        #[derive(Deserialize)]
+        struct Asked {
+            name: String,
+            #[serde(default)]
+            given: Option<String>,
+        }
+        match serde_json::from_slice::<Asked>(&body) {
+            Ok(asked) => {
+                names
+                    .name(&signer, &asked.name, asked.given.as_deref(), now())
+                    .await
+            }
+            Err(e) => (400, format!("a name is asked for as {{\"name\": ...}}: {e}")),
+        }
+    };
+    if status == 200 {
+        let told = Held {
+            path: path.to_string(),
+            headers: passed_on(parts),
+            body: B64.encode(&body),
+            subject: signer,
+        };
+        if let Err(why) = hold(inner, told) {
+            eprintln!("laye-front: QNTX will not be told of {path}: {why}");
+        }
+    }
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    if status == StatusCode::OK {
+        json(status, words)
+    } else {
+        said(status, words)
+    }
+}
+
+/// The request's headers as QNTX is handed them: a session's own signature
+/// is laye's to read and goes no further; any other credential is QNTX's own.
+fn passed_on(parts: &hyper::http::request::Parts) -> Vec<(String, String)> {
+    parts
+        .headers
+        .iter()
+        .filter(|(name, value)| {
+            *name != hyper::header::AUTHORIZATION
+                || !value.to_str().is_ok_and(|v| v.starts_with(SIGNED))
+        })
+        .filter_map(|(name, value)| Some((name.to_string(), value.to_str().ok()?.to_string())))
+        .collect()
 }
 
 fn is_grpc(parts: &hyper::http::request::Parts) -> bool {
@@ -632,17 +734,27 @@ fn keep(
         body: B64.encode(body),
         subject,
     };
+    match hold(inner, held) {
+        Ok(kept) => {
+            let id = format!("laye-held-{}-{kept}", now());
+            json(StatusCode::OK, a2a_spoken::submitted(send, &id))
+        }
+        Err(why) => said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("QNTX did not answer, and laye could not keep what was said: {why}"),
+        ),
+    }
+}
+
+/// `held`, kept until QNTX is handed it; how many are kept with it.
+fn hold(inner: &Inner, held: Held) -> Result<usize, String> {
     let mut all = inner.held.lock().unwrap_or_else(|p| p.into_inner());
     all.push(held);
     if let Err(why) = save(&inner.config.held_at, &all) {
         all.pop();
-        return said(
-            StatusCode::SERVICE_UNAVAILABLE,
-            format!("QNTX did not answer, and laye could not keep what was said: {why}"),
-        );
+        return Err(why);
     }
-    let id = format!("laye-held-{}-{}", now(), all.len());
-    json(StatusCode::OK, a2a_spoken::submitted(send, &id))
+    Ok(all.len())
 }
 
 /// What was kept, handed to QNTX in the order it was said, until QNTX does

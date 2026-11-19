@@ -114,6 +114,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         nodes: Vec::new(),
         invitations_at: held_at.with_file_name("invitations.jsonl"),
         ceremony_at: "https://node.example".into(),
+        names: None,
         held_at,
     }
 }
