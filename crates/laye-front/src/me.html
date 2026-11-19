@@ -60,6 +60,7 @@
     <button type="button" id="signin">Sign in with your passkey</button>
   </div>
   <div class="presses" id="make" hidden></div>
+  <div class="presses" id="yes" hidden></div>
   <div class="presses" id="out" hidden>
     <button type="button" id="signout">Sign out</button>
   </div>
@@ -116,6 +117,35 @@ async function draw() {
   document.getElementById('out').hidden = !me;
   document.getElementById('make').hidden = !!me;
   if (!me) await drawMake();
+  else await drawYes();
+}
+
+// A key asking to be yours, by the code it printed. Only your passkey session
+// says yes to it.
+const asking = new URLSearchParams(location.search).get('user_code');
+async function drawYes() {
+  const yes = document.getElementById('yes');
+  yes.replaceChildren();
+  yes.hidden = !asking;
+  if (!asking) return;
+  const shown = await asked('/laye/device/shown?user_code=' + encodeURIComponent(asking))
+    .catch((e) => { said(String(e.message || e), true); return null; });
+  if (!shown) return;
+  const what = document.createElement('p');
+  what.textContent = `${shown.label} asks to be you. Its code is ${shown.user_code}; its key is ${shown.did}.`;
+  yes.append(what);
+  if (shown.said) { said('You said yes to it.'); return; }
+  const press = document.createElement('button');
+  press.type = 'button';
+  press.textContent = 'Yes, ' + shown.label + ' is me';
+  press.addEventListener('click', async () => {
+    try {
+      const done = await asked('/laye/device/approve', { user_code: shown.user_code });
+      said(`${done.label} is yours now.`);
+      await drawYes();
+    } catch (e) { said(String(e.message || e), true); }
+  });
+  yes.append(press);
 }
 
 async function drawMake() {
@@ -239,7 +269,9 @@ try {
   await laye.init(JSON.stringify({ bootstrap_addrs: [], binding_signers: SIGNERS }));
   if (!laye.did()) throw new Error('laye did not start: ' + lastError());
   const ticket = new URLSearchParams(location.search).get('ceremony');
-  if (ticket) await cameBack(ticket);
+  if (ticket) {
+    await cameBack(ticket);
+  }
   await draw();
 } catch (e) {
   said(String(e.message || e), true);

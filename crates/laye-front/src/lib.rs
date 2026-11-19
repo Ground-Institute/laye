@@ -13,6 +13,7 @@
 
 pub mod a2a_card;
 pub mod a2a_spoken;
+pub mod devices;
 pub mod door;
 pub mod etcd;
 pub mod invitations;
@@ -368,6 +369,57 @@ async fn as_person(
             )
             .await
         }
+        "/laye/device" if post => {
+            let asked = issuer::form(&String::from_utf8_lossy(body));
+            let field = |name: &str| asked.get(name).map_or("", |v| v.trim());
+            let (status, body) = devices_of(inner, keys)
+                .ask(field("did"), field("label"), now())
+                .await;
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/device/token" if post => {
+            let asked = issuer::form(&String::from_utf8_lossy(body));
+            let device_code = asked.get("device_code").map_or("", |v| v.trim());
+            let (status, body) = devices_of(inner, keys).token(device_code, now()).await;
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/device/shown" | "/laye/device/approve" => {
+            // A key never says yes for a person: only their passkey session does.
+            let (person, level) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let devices = devices_of(inner, keys);
+            let (status, body) = if path == "/laye/device/shown" && get {
+                let query = issuer::form(parts.uri.query().unwrap_or_default());
+                let user_code = query.get("user_code").map_or("", String::as_str);
+                devices.shown(user_code, now()).await
+            } else if path == "/laye/device/approve" && post {
+                #[derive(Deserialize)]
+                struct Asked {
+                    user_code: String,
+                }
+                match serde_json::from_slice::<Asked>(body) {
+                    Ok(asked) => {
+                        devices
+                            .approve(&asked.user_code, &person, &level, now())
+                            .await
+                    }
+                    Err(e) => (
+                        400,
+                        serde_json::json!({ "error": format!("a yes is {{\"user_code\"}}: {e}") }),
+                    ),
+                }
+            } else {
+                return None;
+            };
+            return Some(json(code(status), body.to_string()));
+        }
         "/laye/passkey/out" if post => {
             let mut resp = json(StatusCode::OK, "{}");
             if let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(None)) {
@@ -387,6 +439,20 @@ async fn as_person(
         resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
     }
     Some(resp)
+}
+
+fn code(status: u16) -> StatusCode {
+    StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// The device flow, at the etcd passkeys are kept in; the person says yes at
+/// laye's page on the first origin its passkeys answer at.
+fn devices_of<'a>(inner: &'a Inner, keys: &'a passkeys::Passkeys) -> devices::Devices<'a> {
+    devices::Devices {
+        etcd: &keys.etcd,
+        approve_at: keys.at.origins.first().map_or("", String::as_str),
+        laye: &inner.did,
+    }
 }
 
 /// laye's page for a person: their passkey, and who laye knows them as.

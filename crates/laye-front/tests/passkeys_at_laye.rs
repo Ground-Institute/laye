@@ -630,3 +630,161 @@ async fn a_key_opens_no_session() {
     .unwrap();
     assert_eq!(me.status, 401, "{}", me.text);
 }
+
+async fn form(front: SocketAddr, path: &str, authorization: &str, body: &str) -> Answer {
+    let stream = tokio::net::TcpStream::connect(front).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let mut req = Request::post(path)
+        .header("host", host(AT_L))
+        .header("content-type", "application/x-www-form-urlencoded");
+    if !authorization.is_empty() {
+        req = req.header("authorization", authorization);
+    }
+    let resp = sender
+        .send_request(req.body(Full::new(Bytes::from(body.to_string()))).unwrap())
+        .await
+        .unwrap();
+    let status = resp.status().as_u16();
+    let text =
+        String::from_utf8_lossy(&resp.into_body().collect().await.unwrap().to_bytes()).into_owned();
+    Answer {
+        status,
+        body: serde_json::from_str(&text).unwrap_or(serde_json::Value::Null),
+        text,
+        cookie: None,
+    }
+}
+
+/// One request's signature by `key`, as itself, for laye's origin.
+fn signed(key: &Keypair) -> String {
+    let did = did(key);
+    let token = laye_front::jwt::sign(
+        key,
+        &laye_front::jwt::Claims {
+            iss: did.clone(),
+            sub: did,
+            aud: vec![AT_RP.into()],
+            exp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 60,
+            jti: laye_front::jwt::fresh_jti(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    format!("Signed {token}")
+}
+
+/// A key asks at l to be the person's; the person says yes at q, in their
+/// passkey session, and nowhere else; the key is then theirs at every laye,
+/// and admits a session's key as a key laye's settings name does.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_key_is_a_persons_once_they_say_yes_with_their_passkey() {
+    let etcd = etcd("yes").await;
+    let browser = laye_me::fresh();
+    let roots = vec![did(&browser)];
+    let on_q = laye("yes-q", &etcd.at, roots.clone(), Vec::new()).await;
+    let on_l = laye("yes-l", &etcd.at, roots, Vec::new()).await;
+
+    let agent = laye_me::fresh();
+    let asked = form(
+        on_l,
+        "/laye/device",
+        "",
+        &format!("label=l&did={}", did(&agent).replace(':', "%3A")),
+    )
+    .await;
+    assert_eq!(asked.status, 200, "{}", asked.text);
+    let device_code = asked.body["device_code"].as_str().unwrap().to_string();
+    let user_code = asked.body["user_code"].as_str().unwrap().to_string();
+    assert_eq!(
+        asked.body["verification_uri_complete"],
+        format!("{AT_RP}/laye/me?user_code={user_code}")
+    );
+
+    let pending = form(
+        on_l,
+        "/laye/device/token",
+        "",
+        &format!("device_code={device_code}"),
+    )
+    .await;
+    assert_eq!(
+        pending.body["error"], "authorization_pending",
+        "{}",
+        pending.text
+    );
+
+    // Nobody without a passkey session says yes, a key signing as itself least.
+    let yes = json!({ "user_code": user_code }).to_string();
+    let unsigned = ask(on_q, RP, "POST", "/laye/device/approve", "", &yes)
+        .await
+        .unwrap();
+    assert_eq!(unsigned.status, 401, "{}", unsigned.text);
+
+    let mut passkey = Authenticator::new();
+    assert_eq!(
+        enrol(on_q, AT_RP, &browser, &[], &passkey).await.status,
+        200
+    );
+    let session = sign_in(on_q, AT_RP, &mut passkey).await.cookie.unwrap();
+    let shown = ask(
+        on_q,
+        RP,
+        "GET",
+        &format!("/laye/device/shown?user_code={}", user_code.to_lowercase()),
+        &session,
+        "",
+    )
+    .await
+    .unwrap();
+    assert_eq!(shown.body["did"], did(&agent), "{}", shown.text);
+    let said = ask(on_q, RP, "POST", "/laye/device/approve", &session, &yes)
+        .await
+        .unwrap();
+    assert_eq!(said.status, 200, "{}", said.text);
+
+    let answered = form(
+        on_l,
+        "/laye/device/token",
+        "",
+        &format!("device_code={device_code}"),
+    )
+    .await;
+    assert_eq!(answered.status, 200, "{}", answered.text);
+    assert_eq!(answered.body["person"], did(&browser));
+    assert_eq!(answered.body["did"], did(&agent));
+    let again = form(
+        on_l,
+        "/laye/device/token",
+        "",
+        &format!("device_code={device_code}"),
+    )
+    .await;
+    assert_eq!(again.status, 400, "{}", again.text);
+
+    // The key the person said yes to admits a session's key, at l.
+    let session_key = laye_me::fresh();
+    let admitted = form(
+        on_l,
+        "/auth/admit",
+        &signed(&agent),
+        &format!("did={}&label=a", did(&session_key).replace(':', "%3A")),
+    )
+    .await;
+    assert_eq!(admitted.status, 200, "{}", admitted.text);
+    let stranger = laye_me::fresh();
+    let refused = form(
+        on_l,
+        "/auth/admit",
+        &signed(&stranger),
+        &format!("did={}&label=b", did(&laye_me::fresh()).replace(':', "%3A")),
+    )
+    .await;
+    assert_eq!(refused.status, 403, "{}", refused.text);
+}
