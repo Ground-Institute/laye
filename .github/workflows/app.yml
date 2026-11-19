@@ -35,6 +35,13 @@ jobs:
       # laye-grant builds its proto with prost, which runs protoc.
       - name: protoc
         run: sudo apt-get install -y --no-install-recommends protobuf-compiler
+      # Names are kept in etcd, and their tests run a real one: the version l runs.
+      - name: etcd 3.7.3
+        run: |
+          curl -fsSLO https://github.com/etcd-io/etcd/releases/download/v3.7.3/etcd-v3.7.3-linux-amd64.tar.gz
+          echo "5dfa9cc3b3ce3b4b491fbcc2057d3daa166bcc6676f743fcd20f8e5760cb9775  etcd-v3.7.3-linux-amd64.tar.gz" | sha256sum --check
+          tar -xzf etcd-v3.7.3-linux-amd64.tar.gz
+          echo "$PWD/etcd-v3.7.3-linux-amd64" >> "$GITHUB_PATH"
       - name: Every crate's tests
         run: cargo test --workspace --exclude laye-scene
       - name: The scene answers for every warning
