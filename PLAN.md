@@ -57,6 +57,8 @@ Of what was said on 2026-11-16:
 
 "between 20 and 200 is close"
 
+"i think that the magic island should in a sense be responsibility of laye"
+
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
@@ -75,8 +77,8 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 - [ ] `P2P2A2A_A_003_04` A root verifies an ID in person before inviting: ID Verifier – Display Only, wanted in laye's invite flow. The system shows the verified ID on the root's phone; laye receives none of it.
   Proof: a root taps an invitee's iPhone, sees the ID Wallet verified, and invites; laye's store holds no ID data afterwards.
 
-- [ ] `P2P2A2A_A_003_05` What waits on a person stands on the phone as a Live Activity, as QNTX-App's island does (ADR-060), from laye.
-  Proof: with the app closed, laye starts a Live Activity on the phone, and a press on it is the person's own laye session.
+- [ ] `P2P2A2A_A_003_05` The island is laye's. What waits on a person stands on the phone as a Live Activity (ADR-060), and laye holds it: the widget, the Live Activity push tokens, and the press. QNTX-App's `island/` moves into laye, with its CI (`island-tests`, `island-wall`, `island-draw`), and leaves QNTX-App. A node says what waits, as `server/phones.go` says it now; it says it to laye, not to a phone.
+  Proof: with QNTX-App not installed, a QNTX approval waiting on a person stands on the island from laye, and a press on it answers the node.
 
 - [ ] `P2P2A2A_A_003_06` laye is the A2A layer collections are placed into. What an agent says to an agent is held by laye for its receiver; a person adds to it, removes from it, and releases it. Approval packs are QNTX's: QNTX places items into laye's collections.
   Proof: one session says something to another through laye; it is held, a person releases it from the phone, and the other session receives it. A QNTX approval pack places an item into the same collection.
