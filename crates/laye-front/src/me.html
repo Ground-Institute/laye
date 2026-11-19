@@ -57,7 +57,7 @@
   <h1>laye</h1>
   <p id="who"></p>
   <div class="presses" id="in">
-    <button type="button" id="signin">Sign in with your passkey</button>
+    <button type="button" id="signin">Sign in with the passkey you made here</button>
   </div>
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
@@ -156,7 +156,7 @@ async function drawMake() {
     const press = document.createElement('button');
     press.type = 'button';
     press.textContent = 'Make a passkey as ' + held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
-    press.addEventListener('click', () => enrol().catch((e) => said(String(e.message || e), true)));
+    press.addEventListener('click', () => enrol().catch(sayFailure));
     make.append(press);
     return;
   }
@@ -214,6 +214,11 @@ async function enrol() {
   options.publicKey.challenge = unb64url(text);
   options.publicKey.user.id = unb64url(options.publicKey.user.id);
   options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
+  // A browser with no store of its own reaches a phone instead (QNTX-Web
+  // madeWhere): asked for the platform, it would find none.
+  if (!await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()) {
+    delete options.publicKey.authenticatorSelection.authenticatorAttachment;
+  }
   said('Waiting for your passkey...');
   const credential = await navigator.credentials.create(options);
   const seed = await seedOf(credential, options.publicKey.challenge);
@@ -227,12 +232,23 @@ async function enrol() {
     user_did: laye.owner_did(seed),
     user_did_signature: b64url(laye.owner_sign(seed, utf8(text))),
   });
+  remember(credential.id);
   said('Your passkey is laye’s now: ' + made.person);
   await draw();
 }
 
+// The passkeys this browser made here, so a sign-in names them alone.
+function made() {
+  try { return JSON.parse(localStorage.getItem('laye.passkeys') || '[]'); } catch { return []; }
+}
+function remember(id) {
+  try { localStorage.setItem('laye.passkeys', JSON.stringify([...new Set([...made(), id])])); } catch { /* kept nowhere */ }
+}
+
 async function signIn() {
-  const options = await asked('/laye/passkey/signin/begin', {});
+  const options = await asked('/laye/passkey/signin/begin', { ids: made() });
+  options.publicKey.allowCredentials = (options.publicKey.allowCredentials || [])
+    .map((c) => ({ ...c, id: unb64url(c.id) }));
   const text = options.publicKey.challenge;
   options.publicKey.challenge = unb64url(text);
   options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
@@ -257,7 +273,13 @@ async function signIn() {
   await draw();
 }
 
-document.getElementById('signin').addEventListener('click', () => signIn().catch((e) => said(String(e.message || e), true)));
+// A cancelled biometric is a person changing their mind, or a browser that
+// holds no passkey of laye's yet: said as that, not as a failure.
+const cancelled = (e) => e instanceof Error && e.name === 'NotAllowedError';
+const sayFailure = (e) => said(cancelled(e)
+  ? 'No passkey answered. If you have none here yet, prove an account below and make one.'
+  : String(e.message || e), true);
+document.getElementById('signin').addEventListener('click', () => signIn().catch(sayFailure));
 document.getElementById('signout').addEventListener('click', async () => {
   await asked('/laye/passkey/out', {}).catch((e) => said(String(e.message || e), true));
   said('Signed out');

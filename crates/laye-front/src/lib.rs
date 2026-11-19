@@ -357,7 +357,7 @@ async fn as_person(
         "/laye/passkey/enrol/finish" if post => {
             keys.enrol_finish(body, &inner.did, &inner.key, now()).await
         }
-        "/laye/passkey/signin/begin" if post => keys.sign_in_begin(now()),
+        "/laye/passkey/signin/begin" if post => keys.sign_in_begin(body, now()).await,
         "/laye/passkey/signin/finish" if post => {
             let laye = laye_of(inner);
             keys.sign_in_finish(

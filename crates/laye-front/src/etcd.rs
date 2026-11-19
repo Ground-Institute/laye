@@ -65,6 +65,45 @@ impl Etcd {
         }))
     }
 
+    /// Every key under `prefix`, with its value and revision, in key order.
+    pub async fn under(&self, prefix: &str) -> Result<Vec<(String, Kv)>, String> {
+        let mut end = prefix.as_bytes().to_vec();
+        // The range's end is the prefix with its last byte one past.
+        if let Some(last) = end.last_mut() {
+            *last = last.saturating_add(1);
+        }
+        let answer = self
+            .ask(
+                "/v3/kv/range",
+                json!({ "key": B64.encode(prefix), "range_end": B64.encode(end) }),
+            )
+            .await?;
+        let Some(kvs) = answer.get("kvs").and_then(Value::as_array) else {
+            return Ok(Vec::new());
+        };
+        kvs.iter()
+            .map(|kv| {
+                let decode = |field: &str| {
+                    kv.get(field)
+                        .and_then(Value::as_str)
+                        .map(|v| B64.decode(v))
+                        .transpose()
+                        .map_err(|e| format!("etcd's {field} under {prefix} is not base64: {e}"))
+                        .map(Option::unwrap_or_default)
+                };
+                let key = String::from_utf8(decode("key")?)
+                    .map_err(|e| format!("a key under {prefix} is not UTF-8: {e}"))?;
+                Ok((
+                    key,
+                    Kv {
+                        value: decode("value")?,
+                        mod_revision: revision(kv.get("mod_revision")),
+                    },
+                ))
+            })
+            .collect()
+    }
+
     /// The ops, done together, only when each key is still at the revision it
     /// was read at: 0 for a key nothing is kept at. Whether they were done.
     pub async fn txn(&self, unchanged: &[(&str, i64)], ops: Vec<Op>) -> Result<bool, String> {

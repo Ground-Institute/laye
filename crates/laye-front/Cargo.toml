@@ -27,6 +27,7 @@ tokio = { version = "=1.53.1", features = ["rt-multi-thread", "macros", "time", 
 toml = "=0.8.23"
 sha2 = "=0.10.9"
 ciborium = "=0.2.2"
+chrono = { version = "=0.4.45", default-features = false, features = ["std", "clock"] }
 p256 = { version = "=0.13.2", default-features = false, features = ["ecdsa", "std"] }
 
 [dev-dependencies]

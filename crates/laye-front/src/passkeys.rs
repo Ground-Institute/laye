@@ -367,9 +367,12 @@ impl Passkeys {
                 ],
                 "timeout": CEREMONY_LIFE * 1000,
                 "attestation": "none",
+                // As QNTX asks (server/auth/handlers.go): Firefox 156 below
+                // macOS 26.4 sends an enrolment that does not ask for the
+                // platform to its security-key stack.
                 "authenticatorSelection": {
-                    "residentKey": "required",
-                    "requireResidentKey": true,
+                    "authenticatorAttachment": "platform",
+                    "residentKey": "discouraged",
                     "userVerification": "required",
                 },
             }}),
@@ -496,8 +499,34 @@ impl Passkeys {
         Ok(())
     }
 
-    /// A sign-in: any of laye's passkeys may answer.
-    pub fn sign_in_begin(&self, now: u64) -> Answer {
+    /// A sign-in: the passkeys this browser made here, or, where it holds
+    /// none, every passkey laye keeps. Each is named with the transports a
+    /// platform passkey answers on: Firefox 156 below macOS 26.4 sends a
+    /// sign-in whose allow list names neither internal nor hybrid to its
+    /// security-key stack (QNTX credentials.go).
+    pub async fn sign_in_begin(&self, body: &[u8], now: u64) -> Answer {
+        #[derive(Deserialize, Default)]
+        struct Named {
+            #[serde(default)]
+            ids: Vec<String>,
+        }
+        let asked: Named = serde_json::from_slice(body).unwrap_or_default();
+        let ids = if asked.ids.is_empty() {
+            match self.etcd.under(PASSKEYS).await {
+                Ok(all) => all
+                    .into_iter()
+                    .filter_map(|(key, _)| key.strip_prefix(PASSKEYS).map(str::to_string))
+                    .collect(),
+                Err(why) => return refused(503, why),
+            }
+        } else {
+            asked.ids
+        };
+        let allowed: Vec<serde_json::Value> = ids
+            .iter()
+            .filter(|id| B64URL.decode(id.as_bytes()).is_ok())
+            .map(|id| json!({ "type": "public-key", "id": id, "transports": ["internal", "hybrid"] }))
+            .collect();
         let challenge = self.begin(Asked::SignIn, now);
         Answer {
             status: 200,
@@ -506,7 +535,7 @@ impl Passkeys {
                 "rpId": self.at.rp_id,
                 "timeout": CEREMONY_LIFE * 1000,
                 "userVerification": "required",
-                "allowCredentials": [],
+                "allowCredentials": allowed,
             }}),
             session: None,
         }
