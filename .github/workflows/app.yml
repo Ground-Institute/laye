@@ -57,30 +57,34 @@
         }
       },
       "env": {},
-      "runs-on": "macos-latest",
+      "runs-on": "xcode-27",
       "steps": [
         {
           "uses": "actions/checkout@v5"
         },
         {
+          "name": "Xcode 27.2",
+          "run": "sudo xcode-select -s /Applications/Xcode_27.2.app\nxcodebuild -version\nxcrun --sdk iphoneos --show-sdk-version\n"
+        },
+        {
           "id": "rust",
           "uses": "dtolnay/rust-toolchain@stable",
           "with": {
-            "components": "clippy",
+            "components": "clippy,llvm-tools",
             "targets": "aarch64-apple-ios,wasm32-unknown-unknown"
           }
         },
         {
           "uses": "actions/cache@v4",
           "with": {
-            "key": "ios-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'app/Cargo.lock') }}",
+            "key": "ios-xcode-27.2-${{ steps.rust.outputs.cachekey }}-${{ hashFiles('Cargo.lock', 'app/Cargo.lock') }}",
             "path": "target\napp/target",
-            "restore-keys": "ios-${{ steps.rust.outputs.cachekey }}-"
+            "restore-keys": "ios-xcode-27.2-${{ steps.rust.outputs.cachekey }}-"
           }
         },
         {
-          "name": "ios-common v0.2.0",
-          "run": "git clone -q --depth 1 --branch v0.2.0 https://github.com/teranos/ios-common \"$RUNNER_TEMP/ios-common\"\necho \"IOS_COMMON=$RUNNER_TEMP/ios-common/apple\" >> \"$GITHUB_ENV\"\n"
+          "name": "ios-common v0.3.3",
+          "run": "git clone -q --depth 1 --branch v0.3.3 https://github.com/teranos/ios-common \"$RUNNER_TEMP/ios-common\"\necho \"IOS_COMMON=$RUNNER_TEMP/ios-common/apple\" >> \"$GITHUB_ENV\"\n"
         },
         {
           "name": "wasm-bindgen 0.2.121",
@@ -113,7 +117,7 @@
           },
           "if": "steps.signing.outputs.held == 'true'",
           "name": "App IDs, capabilities and profile at Apple",
-          "run": "python3 -m venv \"$RUNNER_TEMP/asc\"\n\"$RUNNER_TEMP/asc/bin/pip\" install --quiet 'pyjwt[crypto]' requests\n\"$RUNNER_TEMP/asc/bin/python\" \"$IOS_COMMON/apple.py\" apple.json \"$RUNNER_TEMP/app.mobileprovision\"\necho \"IOS_MOBILE_PROVISION=$(base64 < \"$RUNNER_TEMP/app.mobileprovision\" | tr -d '\\n')\" >> \"$GITHUB_ENV\"\n"
+          "run": "python3 -m venv \"$RUNNER_TEMP/asc\"\n\"$RUNNER_TEMP/asc/bin/pip\" install --quiet 'pyjwt[crypto]' requests\n\"$RUNNER_TEMP/asc/bin/python\" \"$IOS_COMMON/apple.py\" apple.json \"$RUNNER_TEMP/profiles\"\necho \"IOS_MOBILE_PROVISION=$(base64 < \"$RUNNER_TEMP/profiles/app.mobileprovision\" | tr -d '\\n')\" >> \"$GITHUB_ENV\"\nif [ -f \"$RUNNER_TEMP/profiles/island.mobileprovision\" ]; then\n  echo \"IOS_ISLAND_MOBILE_PROVISION=$(base64 < \"$RUNNER_TEMP/profiles/island.mobileprovision\" | tr -d '\\n')\" >> \"$GITHUB_ENV\"\nfi\n"
         },
         {
           "if": "steps.signing.outputs.held == 'true'",
