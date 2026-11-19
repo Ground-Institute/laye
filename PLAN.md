@@ -67,9 +67,17 @@ Of what was said on 2026-11-16:
 
 "and the same really goes for everything else that laye app would be using from QNTX-App"
 
+"it means the agents, interacting with them"
+
+"it needs to move to laye as well"
+
+"so laye would not be owning llm gateway type stuff or other of that kind of automation i guess"
+
+"hm... i guess QNTX hosts them, but isnt exclusive host"
+
 The lines below are not quotes. Each is an interpretation and carries its id.
 
-- [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
+- [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (teranos/ios-common `apple/apple.py`, reading `app/apple.json`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
   - `laye.ground.institute`: AutoFill Credential Provider, Associated Domains, App Attest, App Groups, Data Protection, Push Notifications, Time Sensitive Notifications, Sign in with Apple, ID Verifier – Display Only, Location Push Service Extension, Trust Insights.
   - `laye.ground.institute.island`: the Live Activity.
   - `laye.ground.institute.credentials`: the AutoFill extension that holds passkeys.
@@ -87,6 +95,9 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_05` The island is its own repo, used by QNTX-App, laye, and any other app. What waits on a person stands on the phone as a Live Activity (ADR-060). QNTX-App's `island/` moves there with its CI (`island-tests`, `island-wall`, `island-draw`); each app takes it in, as `laye.ground.institute.island` in laye. Collections and approval packs (`_06`) are laye's, and laye starts what waits on laye's island.
   Proof: QNTX-App and laye each build the island from that repo, with nothing of it copied into either; an approval pack waiting on a person stands on laye's island, and a press on it answers the node.
+
+- [ ] `P2P2A2A_A_003_10` A person interacts with agents through laye: what an agent says to them, what they say back, what waits on them. laye hosts no agent and owns no LLM gateway or automation; a QNTX node hosts agents, and is not the only host. laye meets an agent the same way wherever it runs, over A2A.
+  Proof: a person speaks with an agent on q and with one hosted elsewhere from the same laye screen, and laye's store holds no model key.
 
 - [ ] `P2P2A2A_A_003_09` Everything laye takes from QNTX-App lives in a repo of its own, generalised, which QNTX-App, laye and other apps use: the island, `sheet/`, signing against a profile (`ios-project.py`), registering App IDs and profiles (`apple.py`), the TestFlight upload, and waiting until testers can install (`delivered.py`). Neither app keeps a copy.
   Proof: QNTX-App's and laye's repos hold none of these files, both reach TestFlight, and a change in the shared repo reaches both.
