@@ -348,11 +348,7 @@ async fn as_person(
         }
         "/laye/passkey/me" if get => match session_asking(inner, parts) {
             Ok((person, level, until)) => {
-                let shown = passkeys::shown_of(&keys.etcd, &person)
-                    .await
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default();
+                let shown = shown_for(inner, keys, &person).await;
                 passkeys::Answer {
                     status: 200,
                     body: serde_json::json!({
@@ -603,6 +599,107 @@ async fn act_on(
     }
 }
 
+// "why do you make the user click on, if your photo doesnt show here, thing."
+//
+/// What a person is shown as: what laye keeps, or else what laye can find
+/// itself, which it then keeps. The account is the one their passkey's
+/// binding proved. The name and photo are their record at the node, asked as
+/// a key they said yes to; kept, they show while the node is down too.
+/// Nothing here asks the person to do anything.
+async fn shown_for(inner: &Inner, keys: &passkeys::Passkeys, person: &str) -> passkeys::Shown {
+    let mut shown = passkeys::shown_of(&keys.etcd, person)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !shown.name.is_empty() && !shown.picture.is_empty() && !shown.account.is_empty() {
+        return shown;
+    }
+    let before = shown.clone();
+    if shown.account.is_empty() {
+        shown.account = account_of(keys, person).await.unwrap_or_default();
+    }
+    if (shown.name.is_empty() || shown.picture.is_empty())
+        && let Some(record) = record_of(inner, keys, person).await
+    {
+        let field = |name: &str| {
+            record
+                .get(name)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if shown.picture.is_empty() {
+            shown.picture = field("picture");
+        }
+        if shown.name.is_empty() {
+            shown.name = field("display_name");
+        }
+    }
+    if shown.name.is_empty() {
+        shown.name = shown.account.clone();
+    }
+    if shown != before
+        && let Ok(value) = serde_json::to_vec(&shown)
+        && let Err(why) = keys
+            .etcd
+            .txn(
+                &[],
+                vec![etcd::Op::Put(
+                    format!("{}{person}", passkeys::PEOPLE),
+                    value,
+                )],
+            )
+            .await
+    {
+        eprintln!("laye-front: what {person} is shown as was not kept: {why}");
+    }
+    shown
+}
+
+/// The account a person's passkey was made on, as its provider names it.
+async fn account_of(keys: &passkeys::Passkeys, person: &str) -> Option<String> {
+    let all = keys.etcd.under(passkeys::PASSKEYS).await.ok()?;
+    all.iter().find_map(|(_, kv)| {
+        let kept: passkeys::Passkey = serde_json::from_slice(&kv.value).ok()?;
+        let binding = kept.binding.filter(|_| kept.person == person)?;
+        Some(binding.claim.handle.unwrap_or(binding.claim.canonical_id))
+    })
+}
+
+/// The person's record at the node (QNTX `/i/`), asked as a key they said
+/// yes to at laye. None when no such key is kept, or the node did not answer.
+async fn record_of(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    person: &str,
+) -> Option<serde_json::Value> {
+    let theirs = keys.etcd.under(devices::KEYS).await.ok()?;
+    let key = theirs.iter().find_map(|(at, kv)| {
+        let yes: devices::Yes = serde_json::from_slice(&kv.value).ok()?;
+        if yes.person != person {
+            return None;
+        }
+        at.strip_prefix(devices::KEYS).map(str::to_string)
+    })?;
+    let resp = forward(
+        inner,
+        hyper::Version::HTTP_11,
+        &hyper::Method::GET,
+        "/i/",
+        &[],
+        Some(&key),
+        Bytes::new(),
+    )
+    .await
+    .ok()?;
+    if resp.status() != StatusCode::OK {
+        return None;
+    }
+    let body = resp.into_body().collect().await.ok()?.to_bytes();
+    serde_json::from_slice(&body).ok()
+}
+
 /// What a person is shown as, when a page sends it beside what it asks.
 fn shown_in(body: &[u8]) -> Option<passkeys::Shown> {
     let asked: serde_json::Value = serde_json::from_slice(body).ok()?;
@@ -682,7 +779,9 @@ fn person_page(inner: &Inner) -> Response<Body> {
         .replace(
             "{{signers}}",
             &serde_json::to_string(&inner.config.binding_signers).unwrap_or_default(),
-        );
+        )
+        // Each provider's mark, as QNTX-Web's door draws it (ts/provider-marks.ts).
+        .replace("{{marks}}", include_str!("marks.json"));
     let mut resp = said(StatusCode::OK, page);
     resp.headers_mut().insert(
         hyper::header::CONTENT_TYPE,

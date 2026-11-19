@@ -5,138 +5,154 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>laye</title>
 <!--
+  "lift components from the QNTX Door"
+  "laye s calm"
   "but laye needs to feel like laye"
-  "so dont copy cat entirely"
-  Glass, its shadow, and how a press rises and settles are vitreous's,
-  taken as vitreous writes them. What the glass is made of, and what stands
-  behind it, are laye's: its night, the lit stage over it, and the ground
-  symbol the sphere becomes (app/screens).
+  "and laye should have no sharp edges"
+  "there is too much text"
+  QNTX-Web's door (ts/door.ts, css/door.css, ts/provider-marks.ts), as it is:
+  whose door on the left, the one round thing in the middle, the ways in on
+  the plate to the right, one quiet line beneath. laye's are the mark (the
+  ground symbol), the stage behind it, and rounded corners. Glass is
+  vitreous's.
 -->
 <link rel="stylesheet" href="/laye/web/vitreous/vitreous.css">
 <style>
   :root {
     color-scheme: dark;
-    /* What vitreous asks a site to declare: its shadow's ink, and what its
-       glass is made of. laye's glass is its stage's night blue. */
     --ink-rgb: 0 0 0;
     --glass-rgb: 22 26 38;
     --ground: #050608;
     --stage: #1e2233;
-    --ink: #e6e2e2;
-    --quiet: #8b90a0;
     --symbol: #f0d9d6;
-    /*
-      "laye s calm"
-      Red says only that something went wrong.
-    */
-    --wrong: #e88;
+    /* The door's: grey text and lines, one living colour. */
+    --door-text: #a9adb8;
+    --door-text-dim: #7d828f;
+    --door-line: #3d4250;
+    --door-line-lit: #6f7586;
+    --door-well-glass: rgb(255 255 255 / 0.05);
+    --door-print: #dfe4e8;
+    --door-print-yes: #3fb27f;
+    --door-print-no: #c9584f;
   }
   html, body { height: 100%; margin: 0; }
   body {
-    background: var(--ground);
-    color: var(--ink);
+    background: var(--ground); color: var(--door-text);
     font: 14px/1.5 ui-monospace, Menlo, monospace;
   }
-  /* The stage, lit over the night, and the symbol over it: what the glass
-     is seen against. */
   .stage {
     position: fixed; inset: 0; z-index: -1; pointer-events: none;
     background:
-      radial-gradient(ellipse 90% 34% at 50% 34%, var(--stage) 0 70%, transparent 71%),
+      radial-gradient(ellipse 90% 40% at 50% 52%, var(--stage) 0 70%, transparent 71%),
       var(--ground);
   }
-  /* One column, top to bottom, in the page's own flow: laye's name, the
-     symbol, the glass. The page scrolls when there is more than fits, so
-     nothing is ever out of reach. */
-  .column {
-    display: flex; flex-direction: column; align-items: center;
-    min-height: 100%; box-sizing: border-box;
-    padding: 2rem 16px 3rem;
+  [hidden] { display: none !important; }
+
+  header { position: fixed; top: 2.5rem; left: 0; right: 0; text-align: center; }
+  h1 { margin: 0; font-weight: 400; font-size: 1.6rem; letter-spacing: 0.5em; padding-left: 0.5em; color: #e6e2e2; }
+  .tagline { margin: 0.6rem 0 0; color: var(--door-text-dim); font-size: 12px; letter-spacing: 0.15em; }
+
+  /* The door: whose it is, the one round thing, the plate. */
+  #door {
+    min-height: 100%;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-content: center; align-items: center;
+    column-gap: 40px;
   }
-  h1 { margin: 0; font-weight: 400; font-size: 1.6rem; letter-spacing: 0.5em; padding-left: 0.5em; }
-  .symbol {
-    margin: 1.5rem 0 2rem;
-    font: 6rem/1 ui-sans-serif, system-ui, sans-serif;
-    color: var(--symbol);
-    text-shadow: 0 0 18px rgb(240 217 214 / 0.45);
+  .door-mark {
+    justify-self: end;
+    font: 72px/1 ui-sans-serif, system-ui, sans-serif;
+    color: var(--symbol); text-shadow: 0 0 18px rgb(240 217 214 / 0.35);
     user-select: none;
   }
-  main {
-    width: min(24rem, 100%);
-    box-sizing: border-box;
-    padding: 1.2em 1.2em;
-    text-align: center;
-    /* Drawn once, whole: until then it is not there to reach for. */
-    visibility: hidden;
+  .door-stand { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .door-plate {
+    justify-self: start; width: 300px; max-width: 80vw;
+    display: flex; flex-direction: column; align-items: stretch; gap: 10px;
   }
-  main.drawn { visibility: visible; }
-  /* A press that is running: everything waits for it, and says so. */
-  main.busy button { opacity: 0.6; cursor: progress; }
-  /*
-    "transparancy"
-    "opaque when not logged in"
-    Signed out, the glass is opaque: nothing of the stage is seen through it.
-    Signed in, it is vitreous's glass, and the stage shows through.
-  */
-  main.closed { background: rgb(var(--glass-rgb) / 1); }
-  main { transition: background-color 0.6s; }
-  @media (prefers-reduced-motion: reduce) { main { transition: none; } }
-  #who { display: grid; grid-template-columns: auto 1fr; gap: 0.2em 0.8em; align-items: center; text-align: left; margin: 0.2em 0 0.8em; }
-  #who img, #who .initial { grid-row: span 2; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
-  #who .initial { display: grid; place-items: center; background: var(--glass-thin); font-size: 18px; }
-  #who .name { font-size: 15px; overflow-wrap: anywhere; }
-  #who .line { color: var(--quiet); font-size: 12px; overflow-wrap: anywhere; }
-  .link { background: none; border: none; padding: 0; color: var(--quiet); text-decoration: underline; font-size: 12px; cursor: pointer; border-radius: 4px; }
-  .tagline { margin: 0.6rem 0 0; color: var(--quiet); font-size: 12px; letter-spacing: 0.15em; }
-  .trust { margin-top: 1em; padding-top: 0.8em; border-top: 1px solid var(--glass-border); }
-  #who { margin: 0 0 0.5em; overflow-wrap: anywhere; }
-  .presses { display: grid; gap: 0.6em; margin: 1em 0; }
-  button {
-    padding: 0.7em 1em;
-    color: var(--ink);
-    font: inherit;
-    overflow-wrap: anywhere;
-    white-space: normal;
+  .door-say {
+    grid-column: 1 / -1; justify-self: center; margin-top: 28px;
+    min-height: 1.2em; max-width: 340px; text-align: center;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: lowercase;
+    color: var(--door-text-dim);
+    transition: opacity 0.6s;
   }
-  p { margin: 0.3em 0; overflow-wrap: anywhere; }
-  .quiet { color: var(--quiet); font-size: 12px; }
-  .bad { color: var(--wrong); }
-  #said { min-height: 1.5em; margin: 0; }
-  /*
-    "and laye should have no sharp edges"
-  */
-  main { border-radius: 20px; }
-  button { border-radius: 12px; }
-  .pressable:focus-visible { outline-offset: 3px; border-radius: 12px; }
-  [hidden] { display: none !important; }
-  /* A key asking to be you: its code is what you compare, so it stands out. */
-  .code { font-size: 1.6em; letter-spacing: 0.15em; margin: 0.4em 0; }
-  /* What waits, as the room draws what was said: who, small; what, larger. */
-  #waits { text-align: left; margin: 1em 0; }
-  .waiting { border-top: 1px solid var(--glass-border); padding: 0.8em 0; }
-  .waiting .from { color: var(--quiet); font-size: 12px; }
-  .waiting .says { white-space: pre-wrap; font-size: 15px; line-height: 1.6; }
-  .acts { display: flex; gap: 0.5em; flex-wrap: wrap; margin-top: 0.6em; }
-  .acts button { padding: 0.5em 0.9em; }
+  .door-say.gone { opacity: 0; }
+  .door-say.door-bad { color: var(--door-print-no); }
+
+  /* The one round thing: the fingerprint, and, signed in, the person. */
+  .door-fingerprint {
+    width: 96px; height: 96px; padding: 0; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    color: var(--door-print); border: 1px solid var(--door-line);
+    background: rgb(255 255 255 / 0.05);
+    backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+    cursor: pointer;
+    transition: border-color 200ms ease, color 240ms ease, background-color 260ms ease;
+  }
+  .door-fingerprint:hover { border-color: var(--door-line-lit); }
+  .door-fingerprint.door-print-yes { color: var(--door-print-yes); border-color: #1d7a4c; background: rgb(29 122 76 / 0.34); }
+  .door-fingerprint.door-print-no { color: var(--door-print-no); border-color: var(--door-print-no); background: rgb(201 88 79 / 0.3); }
+  .door-face { cursor: default; font-size: 36px; color: #e6e2e2; }
+  .door-face img { width: 100%; height: 100%; object-fit: cover; }
+  .door-name { color: #e6e2e2; font-size: 13px; letter-spacing: 0.06em; }
+
+  /* A way in wears its own mark and says nothing, greyed until reached for. */
+  .door-providers { display: flex; flex-wrap: wrap; gap: 10px; }
+  .door-provider {
+    width: 52px; height: 52px; padding: 0; display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid var(--door-line); border-radius: 12px; cursor: pointer;
+    transition: border-color 160ms ease;
+  }
+  .door-provider:hover { border-color: var(--door-line-lit); }
+  .door-provider svg { width: 24px; height: 24px; filter: saturate(0); opacity: 0.7; transition: filter 200ms ease, opacity 200ms ease; }
+  .door-provider:hover svg, .door-provider:focus-visible svg { filter: saturate(1); opacity: 1; }
+
+  .door-press {
+    font: inherit; font-size: 13px; letter-spacing: 0.1em; text-transform: lowercase;
+    color: var(--door-text); text-align: center; padding: 10px 0; cursor: pointer;
+    border: 1px solid var(--door-line); border-radius: 12px; background: var(--door-well-glass);
+    backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+    transition: color 160ms ease, border-color 160ms ease;
+  }
+  .door-press:hover { color: var(--door-print); border-color: var(--door-line-lit); }
+  .door-skip {
+    font: inherit; font-size: 12px; letter-spacing: 0.08em; text-transform: lowercase;
+    color: var(--door-text-dim); background: none; border: none; padding: 4px 8px; border-radius: 8px; cursor: pointer;
+  }
+  .door-skip:hover { color: var(--door-text); }
+  button:focus-visible { outline: 2px solid var(--door-line-lit); outline-offset: 3px; }
+  #door.busy button { opacity: 0.55; cursor: progress; }
+
+  /* What needs the person, on the plate. */
+  .door-note { margin: 0; font-size: 12px; letter-spacing: 0.06em; color: var(--door-text-dim); }
+  .door-code { margin: 0; font-size: 1.6rem; letter-spacing: 0.2em; color: var(--door-print); }
+  .door-said { margin: 0; color: var(--door-print); white-space: pre-wrap; overflow-wrap: anywhere; }
+  .door-row { display: flex; gap: 8px; }
+  .door-row .door-press { flex: 1; }
+
+  @media (max-width: 768px) {
+    header { position: static; padding-top: 2rem; }
+    #door { grid-template-columns: 1fr; row-gap: 24px; min-height: auto; padding: 2rem 16px 3rem; justify-items: center; }
+    .door-mark, .door-plate { justify-self: center; }
+    .door-mark { font-size: 56px; }
+    .door-providers { justify-content: center; }
+    .tagline { letter-spacing: 0.06em; }
+  }
 </style>
 </head>
 <body>
 <div class="stage"></div>
-<div class="column">
-<h1>laye</h1>
-<p class="tagline">identity · authentication · network · A2A</p>
-<div class="symbol" aria-hidden="true">⏚</div>
-<main class="glass shadow-glass closed">
-  <div id="who" hidden></div>
-  <div class="presses" id="in">
-    <button type="button" class="glass-thin pressable" id="signin">Sign in with your passkey</button>
-  </div>
-  <div class="presses" id="make" hidden></div>
-  <div class="presses" id="yes" hidden></div>
-  <section id="waits" hidden></section>
-  <p id="said" role="status" aria-live="polite"></p>
-  <p class="quiet trust" id="where"></p>
-</main>
+<header>
+  <h1>laye</h1>
+  <p class="tagline">identity · authentication · network · A2A</p>
+</header>
+<div id="door" aria-busy="true">
+  <div class="door-mark" aria-hidden="true">⏚</div>
+  <div class="door-stand"></div>
+  <div class="door-plate"></div>
+  <div class="door-say" role="status" aria-live="polite"></div>
 </div>
 <script type="module">
 // "big piece of laye is wasm"
@@ -147,14 +163,25 @@ import load, * as laye from '/laye/web/laye_p2p.js';
 
 const CEREMONY = {{ceremony}};
 const SIGNERS = {{signers}};
+const MARKS = {{marks}};
 // Fixed forever, as QNTX's: change it and every passkey derives another key.
 const PRF_SALT = new TextEncoder().encode('qntx/passkey-owner/v1');
 
-const said = (words, bad) => {
-  const p = document.getElementById('said');
-  p.textContent = words;
-  p.className = bad ? 'bad' : '';
-};
+const door = document.getElementById('door');
+const stand = door.querySelector('.door-stand');
+const plate = door.querySelector('.door-plate');
+const line = door.querySelector('.door-say');
+
+// What the door says: quiet, and gone after a while; what went wrong stays.
+let fading = null;
+function say(words, bad = false) {
+  clearTimeout(fading);
+  line.textContent = words || '';
+  line.classList.toggle('door-bad', bad);
+  line.classList.remove('gone');
+  if (words && !bad) fading = setTimeout(() => line.classList.add('gone'), 4000);
+}
+
 const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 const unb64url = (s) => {
@@ -181,39 +208,6 @@ function lastError() {
   return all.length ? JSON.stringify(all[all.length - 1]) : '';
 }
 
-// "it doesnt respect the user, as if tis sayign, dont trust me"
-// Everything laye is asked for is asked first, and the panel is drawn once
-// with all of it: nothing moves under the person while they reach for it.
-// After that only what they pressed changes.
-const asking = new URLSearchParams(location.search).get('user_code');
-
-async function gather() {
-  let me = null;
-  try { me = await asked('/laye/passkey/me'); } catch { me = null; }
-  if (!me) {
-    const held = JSON.parse(laye.bindings());
-    let providers = [];
-    if (!held.length) {
-      const answer = await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' });
-      providers = ((await answer.json()).providers || []).filter((p) => p.kind === 'redirect');
-    }
-    return { me, held, providers };
-  }
-  let prove = null;
-  if (!me.name) {
-    const answer = await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' }).catch(() => null);
-    const providers = answer && answer.ok ? ((await answer.json()).providers || []).filter((p) => p.kind === 'redirect') : [];
-    prove = providerOf(me.person, providers) || null;
-  }
-  const [shown, waits] = await Promise.all([
-    asking
-      ? asked('/laye/device/shown?user_code=' + encodeURIComponent(asking)).catch((e) => ({ error: String(e.message || e) }))
-      : Promise.resolve(null),
-    asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
-  ]);
-  return { me, prove, shown, collected: waits.collected || [], waitsError: waits.error };
-}
-
 function el(tag, text, className) {
   const made = document.createElement(tag);
   if (text !== undefined) made.textContent = text;
@@ -221,95 +215,96 @@ function el(tag, text, className) {
   return made;
 }
 
-function press(label, act) {
-  const b = el('button', label, 'glass-thin pressable');
+function button(label, className, act) {
+  const b = el('button', label, className);
   b.type = 'button';
   b.addEventListener('click', act);
   return b;
 }
 
-/** While a press runs, every press waits for it: none is pressed twice, and
- *  none is pressed under another. */
-function busy(on) {
-  const main = document.querySelector('main');
-  main.classList.toggle('busy', on);
-  main.setAttribute('aria-busy', on ? 'true' : 'false');
-  for (const b of main.querySelectorAll('button')) b.disabled = on;
+/** A provider's mark, from QNTX-Web's provider-marks. */
+function mark(id) {
+  const m = MARKS[id];
+  if (!m) return null;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', m.viewBox);
+  svg.setAttribute('aria-hidden', 'true');
+  for (const { fill, d } of m.paths) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', fill);
+    svg.append(path);
+  }
+  return svg;
 }
 
-/** Runs what a press does, says it is running, and draws the panel again
- *  once, with what laye says now. */
-async function pressed(does, doing) {
+/** The door's fingerprint (QNTX-Web door.ts). */
+function fingerprint(act) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  for (const [k, v] of Object.entries({ viewBox: '0 0 24 24', width: '44', height: '44', fill: 'none',
+    stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) {
+    svg.setAttribute(k, v);
+  }
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M13.14 21C10.81 19.54 9.25 16.95 9.25 14c0-1.52 1.23-2.75 2.75-2.75s2.75 1.23 2.75 2.75c0 1.52 1.23 2.75 2.75 2.75s2.75-1.23 2.75-2.75C20.25 9.44 16.55 5.75 12 5.75S3.76 9.44 3.76 14c0 1.02.11 2 .32 2.95M8.49 20.3C7.24 18.51 6.5 16.34 6.5 14c0-3.04 2.46-5.5 5.5-5.5s5.5 2.46 5.5 5.5M17.79 19.48c-.1.01-.2.01-.3.01-3.04 0-5.5-2.46-5.5-5.5M19.67 6.48C17.8 4.35 15.06 3 12 3S6.2 4.35 4.33 6.48');
+  svg.append(path);
+  const b = button('', 'door-fingerprint', act);
+  b.setAttribute('aria-label', 'Sign in');
+  b.append(svg);
+  return b;
+}
+
+/** While a press runs, every press waits for it. */
+function busy(on) {
+  door.classList.toggle('busy', on);
+  door.setAttribute('aria-busy', on ? 'true' : 'false');
+  for (const b of door.querySelectorAll('button')) b.disabled = on;
+}
+
+/** Runs what a press does, then draws the door once with what laye says now. */
+async function pressed(does) {
   busy(true);
-  if (doing) said(doing);
   try {
     const words = await does();
     await draw();
-    if (words) said(words);
+    say(words);
   } catch (e) {
-    await sayFailure(e);
+    await stumbled(e);
   } finally {
     busy(false);
   }
 }
 
-/** A moment as this clock says it, 24-hour, and how far off it is. */
-function when(stamped) {
-  if (!stamped) return '';
-  const at = new Date(stamped);
-  if (Number.isNaN(at.getTime())) return stamped;
-  const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-  const today = at.toDateString() === new Date().toDateString();
-  const day = today ? '' : at.toLocaleDateString([], { weekday: 'short' }) + ' ';
-  const minutes = Math.round((at.getTime() - Date.now()) / 60000);
-  const far = Math.abs(minutes) < 60 ? `${Math.abs(minutes)} min` : `${Math.round(Math.abs(minutes) / 6) / 10} h`;
-  return `${day}${clock} (${minutes >= 0 ? 'in ' + far : far + ' ago'})`;
+function clock(secs) {
+  const at = new Date(secs * 1000);
+  const time = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  return at.toDateString() === new Date().toDateString()
+    ? time
+    : `${at.toLocaleDateString([], { weekday: 'short' })} ${time}`;
 }
 
-function makeNodes(got) {
-  if (got.held.length) {
-    const names = got.held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
-    return [press('Make a passkey as ' + names, () => pressed(() => enrol(), 'Proving this browser’s key...'))];
+const asking = new URLSearchParams(location.search).get('user_code');
+
+/** Everything laye is asked for, asked first: the door is drawn once. */
+async function gather() {
+  let me = null;
+  try { me = await asked('/laye/passkey/me'); } catch { me = null; }
+  if (!me) {
+    const held = JSON.parse(laye.bindings());
+    let providers = [];
+    if (!held.length) {
+      const answer = await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' }).catch(() => null);
+      providers = answer && answer.ok ? ((await answer.json()).providers || []).filter((p) => p.kind === 'redirect') : [];
+    }
+    return { me, held, providers };
   }
-  return got.providers.map((p) => press('Prove your ' + p.label + ' account', () => goProve(p)));
-}
-
-/** A DID as a person can compare it: its start and its end. */
-const short = (did) => did.length > 24 ? `${did.slice(8, 16)}…${did.slice(-6)}` : did;
-
-/** A moment in seconds, as this clock says it. */
-const clock = (secs) => when(new Date(secs * 1000).toISOString());
-
-/** Who is signed in, as they know themselves: their photo, their name, the
- *  account it came from, how long the session lasts, and a way out. */
-function whoNodes(me) {
-  const name = me.name || me.account || me.person;
-  const face = me.picture ? el('img') : el('div', name.slice(0, 1).toUpperCase(), 'initial');
-  if (me.picture) {
-    face.src = me.picture;
-    face.alt = '';
-    face.referrerPolicy = 'no-referrer';
-  }
-  const account = me.account || me.person;
-  const parts = [];
-  if (account !== name) parts.push(account);
-  if (me.level === 'ROOT') parts.push('root');
-  parts.push(`signed in until ${clock(me.until)}`);
-  const line = el('div', parts.join(' · ') + ' · ', 'line');
-  const out = el('button', 'Not you? Sign out', 'link');
-  out.type = 'button';
-  out.addEventListener('click', () => pressed(async () => {
-    await asked('/laye/passkey/out', {});
-    return 'Signed out. Your passkey stays yours; sign in with it again any time.';
-  }, 'Signing out...'));
-  line.append(out);
-  return [face, el('div', name, 'name'), line];
-}
-
-/** The provider a person's account is at, to ask it for their name and photo. */
-function providerOf(person, providers) {
-  const at = person.startsWith('https://') ? 'mastodon' : person.split(':')[0];
-  return providers.find((p) => p.id === at);
+  const [shown, waits] = await Promise.all([
+    asking
+      ? asked('/laye/device/shown?user_code=' + encodeURIComponent(asking)).catch((e) => ({ error: String(e.message || e) }))
+      : Promise.resolve(null),
+    asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
+  ]);
+  return { me, shown, collected: waits.collected || [], waitsError: waits.error };
 }
 
 function goProve(p) {
@@ -322,105 +317,114 @@ function goProve(p) {
   location.assign(CEREMONY + '/auth/binding/go?' + go);
 }
 
+/** Signed out: the fingerprint in the middle; on the plate, a first visit's ways in. */
+function signedOut(got) {
+  const middle = [fingerprint(() => pressed(signIn))];
+  const right = [];
+  if (got.held.length) {
+    right.push(button('make a passkey', 'door-press', () => pressed(enrol)));
+  } else if (got.providers.length) {
+    const ways = el('div', undefined, 'door-providers');
+    for (const p of got.providers) {
+      const b = button('', 'door-provider', () => goProve(p));
+      const drawn = mark(p.id);
+      if (drawn) b.append(drawn); else b.textContent = p.label.slice(0, 1);
+      b.title = p.label;
+      b.setAttribute('aria-label', `Prove your ${p.label} account`);
+      ways.append(b);
+    }
+    right.push(ways);
+  }
+  return { middle, right };
+}
+
+/** Signed in: the person in the middle, and what needs them on the plate. */
+function signedIn(got) {
+  const me = got.me;
+  const name = me.name || me.account || me.person;
+  const face = el('div', undefined, 'door-fingerprint door-face');
+  if (me.picture) {
+    const img = el('img');
+    img.src = me.picture;
+    img.alt = '';
+    img.referrerPolicy = 'no-referrer';
+    face.append(img);
+  } else {
+    face.textContent = name.slice(0, 1).toUpperCase();
+  }
+  const middle = [face, el('div', name, 'door-name'), button('sign out', 'door-skip', () => pressed(async () => {
+    await asked('/laye/passkey/out', {});
+    return 'signed out';
+  }))];
+  return { middle, right: [...yesNodes(got.shown), ...waitsNodes(got)] };
+}
+
 // A key asking to be yours, by the code it printed. Only your passkey session
-// says yes to it, and before it does, it is told what that lets the key do.
+// says yes to it.
 function yesNodes(shown) {
   if (!shown) return [];
-  if (shown.error) return [el('p', shown.error, 'bad')];
-  const nodes = [
-    el('p', `${shown.label} asks to be you. It asked ${clock(shown.asked_at)}.`),
-    el('p', 'Check this code is the one the key printed:', 'quiet'),
-    el('p', shown.user_code, 'code'),
-    el('p', `key ${short(shown.did)}`, 'quiet'),
-  ];
-  if (shown.said) {
-    nodes.push(el('p', 'You said yes to it.', 'quiet'));
-    return nodes;
-  }
-  nodes.push(el('p', `Saying yes lets it admit your sessions at laye and be named as you. The request closes ${clock(shown.until)}.`, 'quiet'));
-  nodes.push(press('Yes, this key is me', () => pressed(async () => {
-    const done = await asked('/laye/device/approve', { user_code: shown.user_code });
-    return `${done.label} is yours now.`;
-  }, 'Saying yes...')));
+  if (shown.error) return [el('p', shown.error, 'door-note')];
+  const nodes = [el('p', `${shown.label} wants to be you`, 'door-note'), el('p', shown.user_code, 'door-code')];
+  if (shown.said) return [...nodes, el('p', 'you said yes', 'door-note')];
+  nodes.push(el('p', 'same code as the key shows?', 'door-note'), el('p', `closes ${clock(shown.until)}`, 'door-note'));
+  nodes.push(button('yes, it is me', 'door-press', () => pressed(async () => {
+    await asked('/laye/device/approve', { user_code: shown.user_code });
+    return 'done';
+  })));
   return nodes;
 }
 
 // "and as a human i can observe it"
 // What agents said to your agents, held until it is due or you release it.
 function waitsNodes(got) {
-  if (got.waitsError) return [el('p', got.waitsError, 'bad')];
-  if (!got.collected.length) return [el('p', 'Nothing waits for your agents.', 'quiet')];
-  return got.collected.map((one) => {
-    const block = el('div', undefined, 'waiting');
-    const due = one.due ? `goes ${when(one.due)}` : 'goes when you say';
-    block.append(el('p', `For ${one.to}: ${due}` + (one.held_until ? `, held until ${when(one.held_until)}` : '')));
+  if (got.waitsError) return [el('p', got.waitsError, 'door-note')];
+  const nodes = [];
+  for (const one of got.collected) {
+    nodes.push(el('p', `for ${one.to}`, 'door-note'));
     for (const w of one.waiting) {
-      block.append(el('p', `${w.from}, ${when(w.at)}${w.edited ? ', changed by you' : ''}`, 'from'));
-      block.append(el('p', w.says, 'says'));
+      nodes.push(el('p', `${w.from}:`, 'door-note'), el('p', w.says, 'door-said'));
     }
-    if (one.failure) block.append(el('p', `Not delivered since ${when(one.failing_since)}, ${one.tries} tries: ${one.failure}`, 'bad'));
-    const acts = el('div', undefined, 'acts');
-    // What is pressed goes as it was seen: these ids, nothing that came in since.
     const ids = one.waiting.map((w) => w.id);
-    const act = (doing, body, words) => () => pressed(async () => {
+    const act = (body, words) => () => pressed(async () => {
       await asked('/laye/collected/act', { did: one.did, ...body });
       return words;
-    }, doing);
-    acts.append(press('Release now', act('Releasing...', { act: 'release', ids }, `Released to ${one.to}.`)));
-    acts.append(press('Later', act('Passing it on...', { act: 'later' }, 'Passed to the next delivery.')));
-    // Cancelled is never delivered, and cannot be taken back: it is asked twice.
-    const cancel = press('Cancel', () => {
-      const sure = el('div', undefined, 'acts');
-      sure.append(el('p', `Cancel what waits for ${one.to}? It will never reach it.`, 'quiet'));
-      sure.append(press('Yes, cancel it', act('Cancelling...', { act: 'cancel' }, 'Cancelled.')));
-      const keep = press('Keep it', () => sure.replaceWith(acts));
-      sure.append(keep);
-      acts.replaceWith(sure);
-      keep.focus();
     });
-    acts.append(cancel);
-    block.append(acts);
-    return block;
-  });
+    const row = el('div', undefined, 'door-row');
+    row.append(
+      button('release', 'door-press', act({ act: 'release', ids }, `released to ${one.to}`)),
+      button('later', 'door-press', act({ act: 'later' }, 'later')),
+      button('cancel', 'door-press', () => {
+        // Cancelled never reaches it, so it is asked twice.
+        const sure = el('div', undefined, 'door-row');
+        const keep = button('keep', 'door-press', () => sure.replaceWith(row));
+        sure.append(button('cancel it', 'door-press', act({ act: 'cancel' }, 'cancelled')), keep);
+        row.replaceWith(sure);
+        keep.focus();
+      }),
+    );
+    nodes.push(row);
+  }
+  return nodes;
 }
 
 async function draw() {
   const got = await gather();
-  // Everything below is one synchronous change: the browser draws it once.
-  const signedIn = !!got.me;
-  document.querySelector('main').classList.toggle('closed', !signedIn);
-  document.getElementById('who').hidden = !signedIn;
-  document.getElementById('who').replaceChildren(...(signedIn ? whoNodes(got.me) : []));
-  document.getElementById('in').hidden = signedIn;
-  document.getElementById('make').hidden = signedIn;
-  document.getElementById('make').replaceChildren(...(signedIn ? [] : makeNodes(got)));
-  const yes = signedIn ? yesNodes(got.shown) : [];
-  if (signedIn && got.prove) {
-    const show = el('button', `Show your name and photo here (asks ${got.prove.label})`, 'link');
-    show.type = 'button';
-    show.addEventListener('click', () => goProve(got.prove));
-    yes.push(show);
-  }
-  document.getElementById('yes').hidden = !yes.length;
-  document.getElementById('yes').replaceChildren(...yes);
-  document.getElementById('waits').hidden = !signedIn;
-  document.getElementById('waits').replaceChildren(...(signedIn ? waitsNodes(got) : []));
-  if (!signedIn && asking) said('Sign in with your passkey to say whether this key is you.');
-  document.querySelector('main').classList.add('drawn');
-  // The next thing to press has the focus: Enter does it.
-  const next = document.querySelector('main section:not([hidden]) button, main .presses:not([hidden]) button');
-  if (next && !document.querySelector('main.busy')) next.focus({ preventScroll: true });
+  const { middle, right } = got.me ? signedIn(got) : signedOut(got);
+  // One synchronous change: the browser draws it once.
+  stand.replaceChildren(...middle);
+  plate.replaceChildren(...right);
+  plate.hidden = !right.length;
+  if (!got.me && asking) say('sign in to answer the key');
+  door.setAttribute('aria-busy', 'false');
 }
 
 async function cameBack(ticket) {
   history.replaceState(null, '', location.pathname);
   const answer = await fetch(CEREMONY + '/auth/binding/result?ceremony=' + encodeURIComponent(ticket), { credentials: 'include' });
-  if (!answer.ok) throw new Error('the account was not proven: ' + answer.status);
+  if (!answer.ok) throw new Error('the account was not proven');
   const { binding, name, picture } = await answer.json();
   laye.accept_binding(JSON.stringify(binding));
-  if (!JSON.parse(laye.bindings()).length) throw new Error('laye did not keep the binding: ' + lastError());
-  // What the provider showed the person as, kept with the passkey they make,
-  // or now, when they are already signed in.
+  if (!JSON.parse(laye.bindings()).length) throw new Error('laye did not keep the account: ' + lastError());
   const shown = { name: name || '', picture: picture || '', account: binding.claim.handle || binding.claim.canonical_id };
   try { sessionStorage.setItem('laye.shown', JSON.stringify(shown)); } catch { /* asked again next time */ }
   await asked('/laye/person', { binding, shown }).catch(() => null);
@@ -440,8 +444,11 @@ async function seedOf(credential, challenge) {
   return onGet?.results?.first ? new Uint8Array(onGet.results.first) : null;
 }
 
+function storedShown() {
+  try { return JSON.parse(sessionStorage.getItem('laye.shown') || 'null'); } catch { return null; }
+}
+
 async function enrol() {
-  said('Proving this browser’s key...');
   const { challenge } = await asked('/laye/challenge');
   const signature = laye.sign(utf8(challenge));
   if (!signature.length) throw new Error('laye did not sign: ' + lastError());
@@ -453,16 +460,14 @@ async function enrol() {
   options.publicKey.challenge = unb64url(text);
   options.publicKey.user.id = unb64url(options.publicKey.user.id);
   options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
-  // A browser with no store of its own reaches a phone instead (QNTX-Web
-  // madeWhere): asked for the platform, it would find none.
+  // A browser with no store of its own reaches a phone instead (QNTX-Web madeWhere).
   if (!await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()) {
     delete options.publicKey.authenticatorSelection.authenticatorAttachment;
   }
-  said('Waiting for your passkey...');
   const credential = await navigator.credentials.create(options);
   const seed = await seedOf(credential, options.publicKey.challenge);
-  if (!seed) throw new Error('this authenticator cannot derive a key, so the passkey would belong to nobody');
-  const made = await asked('/laye/passkey/enrol/finish', {
+  if (!seed) throw new Error('this device cannot make a passkey laye can use');
+  await asked('/laye/passkey/enrol/finish', {
     id: credential.id, rawId: b64url(credential.rawId), type: credential.type,
     response: {
       clientDataJSON: b64url(credential.response.clientDataJSON),
@@ -472,12 +477,7 @@ async function enrol() {
     user_did_signature: b64url(laye.owner_sign(seed, utf8(text))),
   });
   remember(credential.id);
-  return 'Your passkey is made, and you are signed in.';
-}
-
-// What the provider last showed this person as, in this tab.
-function storedShown() {
-  try { return JSON.parse(sessionStorage.getItem('laye.shown') || 'null'); } catch { return null; }
+  return '';
 }
 
 // The passkeys this browser made here, so a sign-in names them alone.
@@ -495,14 +495,13 @@ async function signIn() {
   const text = options.publicKey.challenge;
   options.publicKey.challenge = unb64url(text);
   options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
-  said('Waiting for your passkey...');
   const got = await navigator.credentials.get(options);
   const seed = got.getClientExtensionResults().prf?.results?.first;
   const owner = seed ? {
     user_did: laye.owner_did(new Uint8Array(seed)),
     user_did_signature: b64url(laye.owner_sign(new Uint8Array(seed), utf8(text))),
   } : {};
-  const answered = await asked('/laye/passkey/signin/finish', {
+  await asked('/laye/passkey/signin/finish', {
     id: got.id, rawId: b64url(got.rawId), type: got.type,
     response: {
       clientDataJSON: b64url(got.response.clientDataJSON),
@@ -512,44 +511,32 @@ async function signIn() {
     },
     ...owner,
   });
-  return `Signed in as ${answered.person}.`;
+  return '';
 }
 
-// A cancelled biometric is a person changing their mind, or a browser that
-// holds no passkey of laye's yet: said as that, not as a failure. A session
-// that ended is said as that, and the page asks for the passkey again.
-const cancelled = (e) => e instanceof Error && e.name === 'NotAllowedError';
-async function sayFailure(e) {
-  if (cancelled(e)) {
-    said('Nothing was done. If you have no passkey here yet, prove an account below and make one.');
-    return;
-  }
+// A cancelled prompt is a person changing their mind: nothing to say. A
+// session that ended is asked for again. The fingerprint is the answer.
+async function stumbled(e) {
+  if (e instanceof Error && e.name === 'NotAllowedError') { say(''); return; }
   const why = String(e.message || e);
   if (/no person's session|session is over|session does not verify/.test(why)) {
     await draw();
-    said('Your session ended, so nothing was done. Sign in with your passkey and press it again.');
+    say('sign in again to do that');
     return;
   }
-  said(why, true);
+  door.querySelector('.door-fingerprint:not(.door-face)')?.classList.add('door-print-no');
+  say(why, true);
 }
-document.getElementById('signin').addEventListener('click', () => pressed(() => signIn(), 'Waiting for your passkey...'));
-
-// Where the person is, and what laye holds of them: said, not implied.
-document.getElementById('where').textContent =
-  `laye at ${location.host}. Your passkey's private part never leaves your device; laye keeps its public key.`;
 
 try {
   await load();
   await laye.init(JSON.stringify({ bootstrap_addrs: [], binding_signers: SIGNERS }));
   if (!laye.did()) throw new Error('laye did not start: ' + lastError());
   const ticket = new URLSearchParams(location.search).get('ceremony');
-  if (ticket) {
-    await cameBack(ticket);
-  }
+  if (ticket) await cameBack(ticket);
   await draw();
 } catch (e) {
-  said(String(e.message || e), true);
-  document.querySelector('main').classList.add('drawn');
+  say(String(e.message || e), true);
 }
 </script>
 </body>
