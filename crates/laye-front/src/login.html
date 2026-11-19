@@ -4,70 +4,67 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>laye</title>
+<link rel="stylesheet" href="/laye/web/vitreous/vitreous.css">
 <style>
-  /* laye's look, as it was in teranos/laye's bevy-starter. */
+  /* laye's face, as laye's page has it (me.html): vitreous's glass over
+     laye's own stage. Nobody is signed in here yet, so the glass is opaque. */
   :root {
     color-scheme: dark;
+    --ink-rgb: 0 0 0;
+    --glass-rgb: 22 26 38;
     --ground: #050608;
-    --ink: #ddd;
-    --panel: rgba(20, 22, 28, 0.85);
-    --edge: #333;
-    /*
-      "laye s calm"
-      A press is neutral; red says only that something went wrong.
-    */
-    --press: #1a1d24;
-    --press-hover: #232731;
-    --press-ink: #ddd;
-    --press-edge: #3a3f4a;
+    --stage: #1e2233;
+    --ink: #e6e2e2;
+    --quiet: #8b90a0;
+    --symbol: #f0d9d6;
     --wrong: #e88;
   }
-  html, body { height: 100%; }
-  body {
-    margin: 0;
-    padding: 0 16px;
-    display: grid;
-    place-items: center;
-    background: radial-gradient(ellipse at 50% 30%, #0b1020 0%, var(--ground) 60%);
-    color: var(--ink);
-    font: 14px ui-monospace, Menlo, monospace;
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--ground); color: var(--ink); font: 14px/1.5 ui-monospace, Menlo, monospace; }
+  .stage {
+    position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(ellipse 90% 34% at 50% 34%, var(--stage) 0 70%, transparent 71%),
+      var(--ground);
+  }
+  .column {
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100%; box-sizing: border-box; padding: 2rem 16px 3rem;
+  }
+  h1 { margin: 0; font-weight: 400; font-size: 1.6rem; letter-spacing: 0.5em; padding-left: 0.5em; }
+  .tagline { margin: 0.6rem 0 0; color: var(--quiet); font-size: 12px; letter-spacing: 0.15em; }
+  .symbol {
+    margin: 1.5rem 0 2rem; font: 6rem/1 ui-sans-serif, system-ui, sans-serif;
+    color: var(--symbol); text-shadow: 0 0 18px rgb(240 217 214 / 0.45); user-select: none;
   }
   main {
-    width: 100%;
-    max-width: 22rem;
-    padding: 1.5em 1.2em;
-    background: var(--panel);
-    border: 1px solid var(--edge);
-    backdrop-filter: blur(4px);
-    text-align: center;
+    width: min(24rem, 100%); box-sizing: border-box; padding: 1.2em;
+    text-align: center; background: rgb(var(--glass-rgb) / 1);
   }
-  h1 {
-    margin: 0 0 0.5em;
-    font-weight: 400;
-    letter-spacing: 0.4em;
-    text-shadow: 0 0 12px rgba(180, 200, 255, 0.25);
-  }
-  #providers { display: grid; gap: 0.75em; margin: 1.5em 0 1em; }
-  button {
-    padding: 0.6em 1em;
-    background: var(--press);
-    color: var(--press-ink);
-    border: 1px solid var(--press-edge);
-    font: inherit;
-    cursor: pointer;
-  }
-  button:hover { background: var(--press-hover); }
-  #said { min-height: 1.5em; margin: 0; }
+  #providers { display: grid; gap: 0.6em; margin: 0.4em 0 1em; }
+  button { padding: 0.7em 1em; color: var(--ink); font: inherit; overflow-wrap: anywhere; white-space: normal; }
+  /*
+    "and laye should have no sharp edges"
+  */
+  main { border-radius: 20px; }
+  button { border-radius: 12px; }
+  .pressable:focus-visible { outline-offset: 3px; border-radius: 12px; }
+  #said { min-height: 1.5em; margin: 0; overflow-wrap: anywhere; }
   .bad { color: var(--wrong); }
-  a.quiet { color: #889; text-decoration: none; padding: 0.3em; }
+  a.quiet { color: var(--quiet); text-decoration: none; padding: 0.3em; }
 </style>
 </head>
 <body>
-<main>
-  <h1>laye</h1>
+<div class="stage"></div>
+<div class="column">
+<h1>laye</h1>
+<p class="tagline">identity · authentication · network · A2A</p>
+<div class="symbol" aria-hidden="true">⏚</div>
+<main class="glass shadow-glass">
   <div id="providers"></div>
-  <p id="said"></p>
+  <p id="said" role="status" aria-live="polite"></p>
 </main>
+</div>
 <script type="module">
 // "the lgin screen, you would be seeing laye"
 // This browser's key is made here and kept here: it never leaves the tab.
@@ -162,6 +159,7 @@ async function draw() {
   const list = document.getElementById('providers');
   for (const p of providers.filter((p) => p.kind === 'redirect')) {
     const button = document.createElement('button');
+    button.className = 'glass-thin pressable';
     button.type = 'button';
     button.textContent = 'Sign in with ' + p.label;
     button.addEventListener('click', () => {
@@ -183,6 +181,7 @@ async function draw() {
   app.className = 'quiet';
   list.append(app);
   const keyButton = document.createElement('button');
+  keyButton.className = 'glass-thin pressable';
   keyButton.type = 'button';
   keyButton.textContent = 'Sign in with this browser’s key';
   keyButton.addEventListener('click', () => signIn(null).catch((e) => said(String(e), true)));

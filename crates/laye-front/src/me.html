@@ -45,24 +45,44 @@
       radial-gradient(ellipse 90% 34% at 50% 34%, var(--stage) 0 70%, transparent 71%),
       var(--ground);
   }
+  /* One column, top to bottom, in the page's own flow: laye's name, the
+     symbol, the glass. The page scrolls when there is more than fits, so
+     nothing is ever out of reach. */
+  .column {
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100%; box-sizing: border-box;
+    padding: 2rem 16px 3rem;
+  }
+  h1 { margin: 0; font-weight: 400; font-size: 1.6rem; letter-spacing: 0.5em; padding-left: 0.5em; }
   .symbol {
-    position: fixed; left: 50%; top: 18vh; transform: translateX(-50%);
-    z-index: -1; pointer-events: none;
-    font: 7rem/1 ui-sans-serif, system-ui, sans-serif;
+    margin: 1.5rem 0 2rem;
+    font: 6rem/1 ui-sans-serif, system-ui, sans-serif;
     color: var(--symbol);
     text-shadow: 0 0 18px rgb(240 217 214 / 0.45);
+    user-select: none;
   }
   main {
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-    width: min(24rem, calc(100% - 32px));
+    width: min(24rem, 100%);
     box-sizing: border-box;
-    padding: 1.5em 1.2em;
+    padding: 1.2em 1.2em;
     text-align: center;
     /* Drawn once, whole: until then it is not there to reach for. */
     visibility: hidden;
   }
   main.drawn { visibility: visible; }
-  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; }
+  /* A press that is running: everything waits for it, and says so. */
+  main.busy button { opacity: 0.6; cursor: progress; }
+  /*
+    "transparancy"
+    "opaque when not logged in"
+    Signed out, the glass is opaque: nothing of the stage is seen through it.
+    Signed in, it is vitreous's glass, and the stage shows through.
+  */
+  main.closed { background: rgb(var(--glass-rgb) / 1); }
+  main { transition: background-color 0.6s; }
+  @media (prefers-reduced-motion: reduce) { main { transition: none; } }
+  .tagline { margin: 0.6rem 0 0; color: var(--quiet); font-size: 12px; letter-spacing: 0.15em; }
+  .trust { margin-top: 1em; padding-top: 0.8em; border-top: 1px solid var(--glass-border); }
   #who { margin: 0 0 0.5em; overflow-wrap: anywhere; }
   .presses { display: grid; gap: 0.6em; margin: 1em 0; }
   button {
@@ -76,6 +96,12 @@
   .quiet { color: var(--quiet); font-size: 12px; }
   .bad { color: var(--wrong); }
   #said { min-height: 1.5em; margin: 0; }
+  /*
+    "and laye should have no sharp edges"
+  */
+  main { border-radius: 20px; }
+  button { border-radius: 12px; }
+  .pressable:focus-visible { outline-offset: 3px; border-radius: 12px; }
   [hidden] { display: none !important; }
   /* A key asking to be you: its code is what you compare, so it stands out. */
   .code { font-size: 1.6em; letter-spacing: 0.15em; margin: 0.4em 0; }
@@ -90,12 +116,14 @@
 </head>
 <body>
 <div class="stage"></div>
+<div class="column">
+<h1>laye</h1>
+<p class="tagline">identity · authentication · network · A2A</p>
 <div class="symbol" aria-hidden="true">⏚</div>
-<main class="glass shadow-glass">
-  <h1>laye</h1>
+<main class="glass shadow-glass closed">
   <p id="who"></p>
   <div class="presses" id="in">
-    <button type="button" class="glass-thin pressable" id="signin">Sign in with the passkey you made here</button>
+    <button type="button" class="glass-thin pressable" id="signin">Sign in with your passkey</button>
   </div>
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
@@ -103,8 +131,10 @@
   <div class="presses" id="out" hidden>
     <button type="button" class="glass-thin pressable" id="signout">Sign out</button>
   </div>
-  <p id="said"></p>
+  <p id="said" role="status" aria-live="polite"></p>
+  <p class="quiet trust" id="where"></p>
 </main>
+</div>
 <script type="module">
 // "big piece of laye is wasm"
 // This browser's key is laye's own, kept by laye's wasm. A passkey is made on
@@ -189,21 +219,48 @@ function press(label, act) {
   return b;
 }
 
-/** Runs what a press does, and draws the panel again once, with what laye says now. */
-async function pressed(does) {
+/** While a press runs, every press waits for it: none is pressed twice, and
+ *  none is pressed under another. */
+function busy(on) {
+  const main = document.querySelector('main');
+  main.classList.toggle('busy', on);
+  main.setAttribute('aria-busy', on ? 'true' : 'false');
+  for (const b of main.querySelectorAll('button')) b.disabled = on;
+}
+
+/** Runs what a press does, says it is running, and draws the panel again
+ *  once, with what laye says now. */
+async function pressed(does, doing) {
+  busy(true);
+  if (doing) said(doing);
   try {
     const words = await does();
     await draw();
     if (words) said(words);
   } catch (e) {
-    sayFailure(e);
+    await sayFailure(e);
+  } finally {
+    busy(false);
   }
+}
+
+/** A moment as this clock says it, 24-hour, and how far off it is. */
+function when(stamped) {
+  if (!stamped) return '';
+  const at = new Date(stamped);
+  if (Number.isNaN(at.getTime())) return stamped;
+  const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  const today = at.toDateString() === new Date().toDateString();
+  const day = today ? '' : at.toLocaleDateString([], { weekday: 'short' }) + ' ';
+  const minutes = Math.round((at.getTime() - Date.now()) / 60000);
+  const far = Math.abs(minutes) < 60 ? `${Math.abs(minutes)} min` : `${Math.round(Math.abs(minutes) / 6) / 10} h`;
+  return `${day}${clock} (${minutes >= 0 ? 'in ' + far : far + ' ago'})`;
 }
 
 function makeNodes(got) {
   if (got.held.length) {
     const names = got.held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
-    return [press('Make a passkey as ' + names, () => enrol().catch(sayFailure))];
+    return [press('Make a passkey as ' + names, () => pressed(() => enrol(), 'Proving this browser’s key...'))];
   }
   return got.providers.map((p) => press('Prove your ' + p.label + ' account', () => {
     const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
@@ -232,7 +289,7 @@ function yesNodes(shown) {
     nodes.push(press('Yes, this key is me', () => pressed(async () => {
       const done = await asked('/laye/device/approve', { user_code: shown.user_code });
       return `${done.label} is yours now.`;
-    })));
+    }, 'Saying yes...')));
   }
   return nodes;
 }
@@ -244,23 +301,33 @@ function waitsNodes(got) {
   if (!got.collected.length) return [el('p', 'Nothing waits for your agents.', 'quiet')];
   return got.collected.map((one) => {
     const block = el('div', undefined, 'waiting');
-    block.append(el('p', `For ${one.to}, due ${one.due || 'when you say'}` + (one.held_until ? `, held until ${one.held_until}` : '')));
+    const due = one.due ? `goes ${when(one.due)}` : 'goes when you say';
+    block.append(el('p', `For ${one.to}: ${due}` + (one.held_until ? `, held until ${when(one.held_until)}` : '')));
     for (const w of one.waiting) {
-      block.append(el('p', `${w.from}, ${w.at}${w.edited ? ', changed by you' : ''}`, 'from'));
+      block.append(el('p', `${w.from}, ${when(w.at)}${w.edited ? ', changed by you' : ''}`, 'from'));
       block.append(el('p', w.says, 'says'));
     }
-    if (one.failure) block.append(el('p', `Not delivered since ${one.failing_since}, ${one.tries} tries: ${one.failure}`, 'bad'));
+    if (one.failure) block.append(el('p', `Not delivered since ${when(one.failing_since)}, ${one.tries} tries: ${one.failure}`, 'bad'));
     const acts = el('div', undefined, 'acts');
-    for (const [label, act, words] of [
-      ['Release now', 'release', `Released to ${one.to}.`],
-      ['Later', 'later', 'Passed to the next delivery.'],
-      ['Cancel', 'cancel', 'Cancelled.'],
-    ]) {
-      acts.append(press(label, () => pressed(async () => {
-        await asked('/laye/collected/act', { did: one.did, act, ids: act === 'release' ? one.waiting.map((w) => w.id) : [] });
-        return words;
-      })));
-    }
+    // What is pressed goes as it was seen: these ids, nothing that came in since.
+    const ids = one.waiting.map((w) => w.id);
+    const act = (doing, body, words) => () => pressed(async () => {
+      await asked('/laye/collected/act', { did: one.did, ...body });
+      return words;
+    }, doing);
+    acts.append(press('Release now', act('Releasing...', { act: 'release', ids }, `Released to ${one.to}.`)));
+    acts.append(press('Later', act('Passing it on...', { act: 'later' }, 'Passed to the next delivery.')));
+    // Cancelled is never delivered, and cannot be taken back: it is asked twice.
+    const cancel = press('Cancel', () => {
+      const sure = el('div', undefined, 'acts');
+      sure.append(el('p', `Cancel what waits for ${one.to}? It will never reach it.`, 'quiet'));
+      sure.append(press('Yes, cancel it', act('Cancelling...', { act: 'cancel' }, 'Cancelled.')));
+      const keep = press('Keep it', () => sure.replaceWith(acts));
+      sure.append(keep);
+      acts.replaceWith(sure);
+      keep.focus();
+    });
+    acts.append(cancel);
     block.append(acts);
     return block;
   });
@@ -270,7 +337,10 @@ async function draw() {
   const got = await gather();
   // Everything below is one synchronous change: the browser draws it once.
   const signedIn = !!got.me;
-  document.getElementById('who').textContent = signedIn ? `${got.me.person} (${got.me.level})` : '';
+  document.querySelector('main').classList.toggle('closed', !signedIn);
+  document.getElementById('who').textContent = signedIn
+    ? `You are ${got.me.person}${got.me.level === 'ROOT' ? ', a root' : ''}.`
+    : '';
   document.getElementById('in').hidden = signedIn;
   document.getElementById('out').hidden = !signedIn;
   document.getElementById('make').hidden = signedIn;
@@ -282,6 +352,9 @@ async function draw() {
   document.getElementById('waits').replaceChildren(...(signedIn ? waitsNodes(got) : []));
   if (!signedIn && asking) said('Sign in with your passkey to say whether this key is you.');
   document.querySelector('main').classList.add('drawn');
+  // The next thing to press has the focus: Enter does it.
+  const next = document.querySelector('main section:not([hidden]) button, main .presses:not([hidden]) button');
+  if (next && !document.querySelector('main.busy')) next.focus({ preventScroll: true });
 }
 
 async function cameBack(ticket) {
@@ -338,8 +411,7 @@ async function enrol() {
     user_did_signature: b64url(laye.owner_sign(seed, utf8(text))),
   });
   remember(credential.id);
-  said('Your passkey is laye’s now: ' + made.person);
-  await draw();
+  return 'Your passkey is made, and you are signed in.';
 }
 
 // The passkeys this browser made here, so a sign-in names them alone.
@@ -374,22 +446,35 @@ async function signIn() {
     },
     ...owner,
   });
-  said('Signed in as ' + answered.person);
-  await draw();
+  return `Signed in as ${answered.person}.`;
 }
 
 // A cancelled biometric is a person changing their mind, or a browser that
-// holds no passkey of laye's yet: said as that, not as a failure.
+// holds no passkey of laye's yet: said as that, not as a failure. A session
+// that ended is said as that, and the page asks for the passkey again.
 const cancelled = (e) => e instanceof Error && e.name === 'NotAllowedError';
-const sayFailure = (e) => said(cancelled(e)
-  ? 'No passkey answered. If you have not made one here yet, prove an account below and make it; then sign in.'
-  : String(e.message || e), true);
-document.getElementById('signin').addEventListener('click', () => signIn().catch(sayFailure));
-document.getElementById('signout').addEventListener('click', async () => {
-  await asked('/laye/passkey/out', {}).catch((e) => said(String(e.message || e), true));
-  said('Signed out');
-  await draw();
-});
+async function sayFailure(e) {
+  if (cancelled(e)) {
+    said('Nothing was done. If you have no passkey here yet, prove an account below and make one.');
+    return;
+  }
+  const why = String(e.message || e);
+  if (/no person's session|session is over|session does not verify/.test(why)) {
+    await draw();
+    said('Your session ended, so nothing was done. Sign in with your passkey and press it again.');
+    return;
+  }
+  said(why, true);
+}
+document.getElementById('signin').addEventListener('click', () => pressed(() => signIn(), 'Waiting for your passkey...'));
+document.getElementById('signout').addEventListener('click', () => pressed(async () => {
+  await asked('/laye/passkey/out', {});
+  return 'Signed out. Your passkey stays yours; sign in with it again any time.';
+}, 'Signing out...'));
+
+// Where the person is, and what laye holds of them: said, not implied.
+document.getElementById('where').textContent =
+  `laye at ${location.host}. Your passkey's private part never leaves your device; laye keeps its public key.`;
 
 try {
   await load();
