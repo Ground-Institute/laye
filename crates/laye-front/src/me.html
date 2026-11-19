@@ -112,7 +112,8 @@
   /* A key asking to be you: its code is what you compare, so it stands out. */
   .code { font-size: 1.6em; letter-spacing: 0.15em; margin: 0.4em 0; }
   /* What waits, as the room draws what was said: who, small; what, larger. */
-  #waits { text-align: left; margin: 1em 0; }
+  #waits, #invites { text-align: left; margin: 1em 0; }
+  #invites input { flex: 1 1 8em; min-width: 0; padding: 0.6em; font: inherit; color: var(--ink); background: var(--glass-thin, transparent); border: 1px solid var(--glass-border); border-radius: 12px; }
   .waiting { border-top: 1px solid var(--glass-border); padding: 0.8em 0; }
   .waiting .from { color: var(--quiet); font-size: 12px; }
   .waiting .says { white-space: pre-wrap; font-size: 15px; line-height: 1.6; }
@@ -134,6 +135,7 @@
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
   <section id="waits" hidden></section>
+  <section id="invites" hidden></section>
   <p id="said" role="status" aria-live="polite"></p>
   <p class="quiet trust" id="where"></p>
 </main>
@@ -211,7 +213,13 @@ async function gather() {
       : Promise.resolve(null),
     asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
   ]);
-  return { me, prove, shown, collected: waits.collected || [], waitsError: waits.error };
+  const invites = me.level === 'ROOT'
+    ? await asked('/laye/invitations').catch((e) => ({ error: String(e.message || e), invitations: [] }))
+    : null;
+  return {
+    me, prove, shown, collected: waits.collected || [], waitsError: waits.error,
+    invitations: invites && (invites.invitations || []), invitesError: invites && invites.error,
+  };
 }
 
 function el(tag, text, className) {
@@ -384,6 +392,70 @@ function waitsNodes(got) {
   });
 }
 
+// "the network is invite only"
+// "and i own the invites"
+// "and i can kick anyone off for whatever reason"
+// A root's invitations: who may come in, by the account they sign in with.
+function invitesNodes(got) {
+  const nodes = [el('p', 'Invites', 'from')];
+  if (got.invitesError) nodes.push(el('p', got.invitesError, 'bad'));
+  for (const inv of got.invitations) {
+    const block = el('div', undefined, 'waiting');
+    const accounts = inv.accounts.map((a) => `${a.provider} ${a.account}`).join(' or ');
+    const state = inv.state === 'accepted' ? `in, as ${inv.accepted_by}` : inv.state;
+    block.append(el('p', accounts, 'says'));
+    block.append(el('p', `${state} · invited ${clock(inv.created_at)}`, 'from'));
+    if (inv.state === 'open' || inv.state === 'accepted') {
+      const kick = inv.state === 'accepted';
+      const acts = el('div', undefined, 'acts');
+      const withdraw = () => pressed(async () => {
+        await asked('/laye/invitations/withdraw', { id: inv.id });
+        return kick ? `${inv.accepted_by} is out.` : 'Invitation cancelled.';
+      }, kick ? 'Kicking...' : 'Cancelling...');
+      // Kicked and cancelled are not taken back: each is asked twice.
+      acts.append(press(kick ? 'Kick' : 'Cancel invitation', () => {
+        const sure = el('div', undefined, 'acts');
+        sure.append(el('p', kick ? `Kick ${inv.accepted_by}? Their sessions end now.` : `Cancel the invitation for ${accounts}?`, 'quiet'));
+        sure.append(press(kick ? 'Yes, kick' : 'Yes, cancel it', withdraw));
+        const keep = press('Keep', () => sure.replaceWith(acts));
+        sure.append(keep);
+        acts.replaceWith(sure);
+        keep.focus();
+      }));
+      block.append(acts);
+    }
+    nodes.push(block);
+  }
+  const form = el('form', undefined, 'acts');
+  const provider = el('input');
+  provider.placeholder = 'provider';
+  provider.setAttribute('list', 'providers');
+  provider.required = true;
+  const known = el('datalist');
+  known.id = 'providers';
+  for (const p of ['github', 'google', 'apple', 'mastodon', 'atproto']) {
+    const o = el('option');
+    o.value = p;
+    known.append(o);
+  }
+  const account = el('input');
+  account.placeholder = 'their account there';
+  account.required = true;
+  const invite = el('button', 'Invite', 'glass-thin pressable');
+  invite.type = 'submit';
+  form.append(provider, known, account, invite);
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const accounts = [{ provider: provider.value.trim(), account: account.value.trim() }];
+    pressed(async () => {
+      await asked('/laye/invitations', { accounts });
+      return `Invited ${accounts[0].provider} ${accounts[0].account}.`;
+    }, 'Inviting...');
+  });
+  nodes.push(form);
+  return nodes;
+}
+
 async function draw() {
   const got = await gather();
   // Everything below is one synchronous change: the browser draws it once.
@@ -405,6 +477,9 @@ async function draw() {
   document.getElementById('yes').replaceChildren(...yes);
   document.getElementById('waits').hidden = !signedIn;
   document.getElementById('waits').replaceChildren(...(signedIn ? waitsNodes(got) : []));
+  const root = signedIn && got.invitations !== null;
+  document.getElementById('invites').hidden = !root;
+  document.getElementById('invites').replaceChildren(...(root ? invitesNodes(got) : []));
   if (!signedIn && asking) said('Sign in with your passkey to say whether this key is you.');
   document.querySelector('main').classList.add('drawn');
   // The next thing to press has the focus: Enter does it.
