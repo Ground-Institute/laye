@@ -12,10 +12,15 @@
     --ink: #ddd;
     --panel: rgba(20, 22, 28, 0.85);
     --edge: #333;
-    --press: #2a1212;
-    --press-hover: #3a1818;
-    --press-ink: #f88;
-    --press-edge: #642;
+    /*
+      "laye s calm"
+      A press is neutral; red says only that something went wrong.
+    */
+    --press: #1a1d24;
+    --press-hover: #232731;
+    --press-ink: #ddd;
+    --press-edge: #3a3f4a;
+    --wrong: #e88;
   }
   html, body { height: 100%; }
   body {
@@ -35,7 +40,7 @@
     border: 1px solid var(--edge);
     text-align: center;
   }
-  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; text-shadow: 0 0 12px rgba(255, 136, 136, 0.55); }
+  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; text-shadow: 0 0 12px rgba(180, 200, 255, 0.25); }
   #who { overflow-wrap: anywhere; }
   .presses { display: grid; gap: 0.75em; margin: 1.2em 0; }
   button {
@@ -48,7 +53,7 @@
   }
   button:hover { background: var(--press-hover); }
   #said { min-height: 1.5em; margin: 0; overflow-wrap: anywhere; }
-  .bad { color: var(--press-ink); }
+  .bad { color: var(--wrong); }
   [hidden] { display: none !important; }
 </style>
 </head>
