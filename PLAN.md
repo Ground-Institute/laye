@@ -59,6 +59,8 @@ Of what was said on 2026-11-16:
 
 "i think that the magic island should in a sense be responsibility of laye"
 
+"well, like, even collections and the idea of approval packs, it would also move to laye"
+
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_003_01` Apple holds what laye is, said once in code: laye's CI registers its App IDs and turns their capabilities on through the App Store Connect API (`app/ci/apple.py`). Nothing is clicked in the developer console. Creating the app in App Store Connect is the one step by hand: the API lists, reads and modifies apps, and creates none.
@@ -78,10 +80,10 @@ The lines below are not quotes. Each is an interpretation and carries its id.
   Proof: a root taps an invitee's iPhone, sees the ID Wallet verified, and invites; laye's store holds no ID data afterwards.
 
 - [ ] `P2P2A2A_A_003_05` The island is laye's. What waits on a person stands on the phone as a Live Activity (ADR-060), and laye holds it: the widget, the Live Activity push tokens, and the press. QNTX-App's `island/` moves into laye, with its CI (`island-tests`, `island-wall`, `island-draw`), and leaves QNTX-App. A node says what waits, as `server/phones.go` says it now; it says it to laye, not to a phone.
-  Proof: with QNTX-App not installed, a QNTX approval waiting on a person stands on the island from laye, and a press on it answers the node.
+  Proof: with QNTX-App not installed, an approval pack waiting on a person stands on the island from laye, and a press on it answers the node.
 
-- [ ] `P2P2A2A_A_003_06` laye is the A2A layer collections are placed into. What an agent says to an agent is held by laye for its receiver; a person adds to it, removes from it, and releases it. Approval packs are QNTX's: QNTX places items into laye's collections.
-  Proof: one session says something to another through laye; it is held, a person releases it from the phone, and the other session receives it. A QNTX approval pack places an item into the same collection.
+- [ ] `P2P2A2A_A_003_06` laye is the A2A layer collections are placed into. What an agent says to an agent is held by laye for its receiver; a person adds to it, removes from it, and releases it. Collections and approval packs move from QNTX into laye (QNTX `server/collected.go` and the packs); a node places into them and is answered.
+  Proof: one session says something to another through laye; it is held, a person releases it from the phone, and the other session receives it. A node's approval is a pack in laye, answered from the phone, and the node receives the answer.
 
 - [ ] `P2P2A2A_A_003_07` Others in the network learn whether you are near your agent fleet. Near is your phone answering laye's `location` push, within 20 m of your laptop; close is 20 m to 200 m; past that, not near. The laptop's position comes from mycelia on it. The asker learns near, close or not near, never a position. When the two positions' accuracy is wider than what separates the answers, laye says it cannot tell.
   Proof: with the phone beside the laptop, someone asks and hears near; across the street, close; elsewhere, not near; with the phone offline, not near.
