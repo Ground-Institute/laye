@@ -1,0 +1,44 @@
+[package]
+name = "laye-app"
+version = "0.0.0"
+description = "laye, on a phone: the key you are, and the accounts that prove it"
+license = "MIT"
+repository = "https://github.com/Ground-Institute/laye"
+edition = "2021"
+
+[lib]
+name = "laye_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "laye"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+# The versions QNTX-App runs on a phone today.
+[dependencies]
+tauri = { version = "=2.11.5", features = [] }
+tauri-plugin-opener = "=2.5.5"
+tauri-plugin-deep-link = "=2.4.10"
+# laye's and the ceremony's addresses answer the app from Rust, where no
+# browser asks either of them whether a page at laye:// may read the answer.
+tauri-plugin-http = "2"
+# QNTX-App's sheet: the provider ceremony in ASWebAuthenticationSession.
+sheet = { path = "sheet" }
+# generate_context! names serde_json from the crate it expands in.
+serde_json = "1"
+
+[lints.rust]
+warnings = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+indexing_slicing = "deny"
+string_slice = "deny"
