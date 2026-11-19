@@ -115,6 +115,8 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         invitations_at: held_at.with_file_name("invitations.jsonl"),
         ceremony_at: "https://node.example".into(),
         names: None,
+        passkeys: None,
+        web: None,
         held_at,
     }
 }
@@ -209,11 +211,19 @@ async fn qntx_s_own_session_reaches_qntx_as_it_came() {
         .await
         .unwrap();
 
-    let (status, body) = say(front.addr, "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0", "the build on k is red").await;
+    let (status, body) = say(
+        front.addr,
+        "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        "the build on k is red",
+    )
+    .await;
     assert_eq!(status, 200, "{body}");
     let got = arrived.lock().unwrap().clone();
     assert_eq!(got.len(), 1);
-    assert_eq!(got[0].authorization, "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0");
+    assert_eq!(
+        got[0].authorization,
+        "Bearer 0f1e2d3c4b5a69788796a5b4c3d2e1f0"
+    );
 }
 
 /// A signature that is not the session's, or one presented twice, never

@@ -19,6 +19,7 @@ pub mod invitations;
 mod issuer;
 pub mod jwt;
 pub mod names;
+pub mod passkeys;
 
 pub use issuer::Node;
 
@@ -85,6 +86,11 @@ pub struct Config {
     /// Where laye keeps who is admitted and the names sessions hold. None
     /// leaves both to QNTX.
     pub names: Option<NamesAt>,
+    /// laye's passkeys, kept in the etcd names are. None makes none.
+    pub passkeys: Option<passkeys::PasskeysAt>,
+    /// Where laye's wasm is, for laye's own page: laye-web. None is beside
+    /// the binary, at ../share/laye/web.
+    pub web: Option<PathBuf>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -124,6 +130,8 @@ struct Inner {
     issued: issuer::Issued,
     invitations: invitations::Invitations,
     names: Option<names::Names>,
+    passkeys: Option<passkeys::Passkeys>,
+    web: Option<PathBuf>,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -144,12 +152,34 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     let addr = listener
         .local_addr()
         .map_err(|e| laye_peer::error("listen", "laye's address is not known", e.to_string()))?;
-    let client: Client<HttpConnector, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<HttpConnector, Full<Bytes>> =
+        Client::builder(TokioExecutor::new()).build_http();
     let names = config.names.as_ref().map(|at| names::Names {
         etcd: etcd::Etcd::new(&at.etcd, client.clone()),
         admitters: at.admitters.clone(),
     });
+    let passkeys = match (&config.passkeys, &config.names) {
+        (Some(at), Some(names)) => Some(passkeys::Passkeys::new(
+            etcd::Etcd::new(&names.etcd, client.clone()),
+            at.clone(),
+        )),
+        (Some(_), None) => {
+            return Err(laye_peer::error(
+                "passkeys",
+                "laye keeps passkeys in the etcd it keeps names in, and names none",
+                "",
+            ));
+        }
+        _ => None,
+    };
+    let web = config.web.clone().or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("share/laye/web")))
+    });
     let inner = Arc::new(Inner {
+        passkeys,
+        web,
         config,
         key,
         did: did.clone(),
@@ -200,6 +230,218 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
+fn laye_of(inner: &Inner) -> issuer::Laye<'_> {
+    issuer::Laye {
+        issuer: &inner.config.issuer,
+        did: &inner.did,
+        nodes: &inner.config.nodes,
+        roots: &inner.config.root_identities,
+        signers: &inner.config.binding_signers,
+        issued: &inner.issued,
+        invitations: &inner.invitations,
+        ceremony: &inner.config.ceremony_at,
+        now: now(),
+    }
+}
+
+fn host_of(parts: &hyper::http::request::Parts) -> &str {
+    parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default()
+}
+
+fn named_by(origin: &str, host: &str) -> bool {
+    origin
+        .split_once("://")
+        .is_some_and(|(_, name)| name.trim_end_matches('/') == host)
+}
+
+/// The person a request's session cookie is, at this laye.
+fn person_asking(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+) -> Result<(String, String), String> {
+    let token = parts
+        .headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| {
+            c.trim()
+                .strip_prefix(passkeys::SESSION_COOKIE)
+                .and_then(|rest| rest.strip_prefix('='))
+        })
+        .ok_or("no person's session is presented")?;
+    passkeys::person_of(token, &inner.did, now())
+}
+
+fn session_cookie(token: Option<&str>) -> String {
+    match token {
+        Some(token) => format!(
+            "{}={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
+            passkeys::SESSION_COOKIE,
+            passkeys::SESSION_LIFE
+        ),
+        None => format!(
+            "{}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+            passkeys::SESSION_COOKIE
+        ),
+    }
+}
+
+/// laye's page for a person, and what it asks: their passkeys and their
+/// session, at laye's own name and at every origin its passkeys answer at.
+async fn as_person(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+    body: &[u8],
+) -> Option<Response<Body>> {
+    let keys = inner.passkeys.as_ref()?;
+    let host = host_of(parts);
+    let ours =
+        named_by(&inner.config.issuer, host) || keys.at.origins.iter().any(|o| named_by(o, host));
+    if !ours {
+        return None;
+    }
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let path = parts.uri.path();
+    if get && let Some(file) = path.strip_prefix("/laye/web/") {
+        return Some(web_file(inner, file));
+    }
+    let answered = match path {
+        "/.well-known/webauthn" if get && host == keys.at.rp_id => passkeys::Answer {
+            status: 200,
+            body: keys.related(),
+            session: None,
+        },
+        "/laye/me" if get => return Some(person_page(inner)),
+        "/laye/challenge" if get => {
+            let (status, _, text) = laye_of(inner).challenge();
+            return Some(json(
+                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                text,
+            ));
+        }
+        "/laye/passkey/me" if get => match person_asking(inner, parts) {
+            Ok((person, level)) => passkeys::Answer {
+                status: 200,
+                body: serde_json::json!({ "person": person, "level": level }),
+                session: None,
+            },
+            Err(why) => passkeys::Answer {
+                status: 401,
+                body: serde_json::json!({ "error": why }),
+                session: None,
+            },
+        },
+        "/laye/passkey/enrol/begin" if post => match serde_json::from_slice::<door::Login>(body) {
+            Ok(login) => match laye_of(inner).first_half(&login) {
+                Ok(first) => keys.enrol_begin(first, now()),
+                Err((status, why)) => passkeys::Answer {
+                    status,
+                    body: serde_json::json!({ "error": why }),
+                    session: None,
+                },
+            },
+            Err(e) => passkeys::Answer {
+                status: 400,
+                body: serde_json::json!({ "error": format!("the login does not read: {e}") }),
+                session: None,
+            },
+        },
+        "/laye/passkey/enrol/finish" if post => {
+            keys.enrol_finish(body, &inner.did, &inner.key, now()).await
+        }
+        "/laye/passkey/signin/begin" if post => keys.sign_in_begin(now()),
+        "/laye/passkey/signin/finish" if post => {
+            let laye = laye_of(inner);
+            keys.sign_in_finish(
+                body,
+                |kept| laye.still_vouched(&kept.person, &kept.level, kept.binding.as_ref()),
+                &inner.did,
+                &inner.key,
+                now(),
+            )
+            .await
+        }
+        "/laye/passkey/out" if post => {
+            let mut resp = json(StatusCode::OK, "{}");
+            if let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(None)) {
+                resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
+            }
+            return Some(resp);
+        }
+        _ => return None,
+    };
+    let mut resp = json(
+        StatusCode::from_u16(answered.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        answered.body.to_string(),
+    );
+    if let Some(token) = answered.session
+        && let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(Some(&token)))
+    {
+        resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
+    }
+    Some(resp)
+}
+
+/// laye's page for a person: their passkey, and who laye knows them as.
+fn person_page(inner: &Inner) -> Response<Body> {
+    let page = include_str!("me.html")
+        .replace(
+            "{{ceremony}}",
+            &serde_json::to_string(&inner.config.ceremony_at).unwrap_or_default(),
+        )
+        .replace(
+            "{{signers}}",
+            &serde_json::to_string(&inner.config.binding_signers).unwrap_or_default(),
+        );
+    let mut resp = said(StatusCode::OK, page);
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    resp
+}
+
+/// laye's wasm and the JS that loads it, from laye-web.
+fn web_file(inner: &Inner, file: &str) -> Response<Body> {
+    let kind = match file {
+        "laye_p2p.js" => "text/javascript",
+        "laye_p2p_bg.wasm" => "application/wasm",
+        _ => {
+            return said(
+                StatusCode::NOT_FOUND,
+                "laye serves its wasm and its JS, and nothing else here",
+            );
+        }
+    };
+    let Some(dir) = &inner.web else {
+        return said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "laye does not know where its wasm is",
+        );
+    };
+    match std::fs::read(dir.join(file)) {
+        Ok(bytes) => {
+            let mut resp = Response::new(whole(bytes));
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static(kind),
+            );
+            resp
+        }
+        Err(e) => said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("laye's wasm is not at {}: {e}", dir.display()),
+        ),
+    }
+}
+
 /// What laye answers itself, at its own name: where people log in. Anything
 /// else, and every other name, goes on to QNTX.
 fn as_laye(
@@ -220,17 +462,7 @@ fn as_laye(
     if !ours {
         return None;
     }
-    let laye = issuer::Laye {
-        issuer: &inner.config.issuer,
-        did: &inner.did,
-        nodes: &inner.config.nodes,
-        roots: &inner.config.root_identities,
-        signers: &inner.config.binding_signers,
-        issued: &inner.issued,
-        invitations: &inner.invitations,
-        ceremony: &inner.config.ceremony_at,
-        now: now(),
-    };
+    let laye = laye_of(inner);
     let get = parts.method == hyper::Method::GET;
     let post = parts.method == hyper::Method::POST;
     let (status, kind, text) = match parts.uri.path() {
@@ -303,6 +535,10 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
             );
         }
     };
+
+    if let Some(answered) = as_person(inner, &parts, &body).await {
+        return answered;
+    }
 
     if let Some(answered) = as_laye(inner, &parts, &body) {
         return answered;
@@ -440,7 +676,10 @@ async fn at_names(
                     .name(&signer, &asked.name, asked.given.as_deref(), now())
                     .await
             }
-            Err(e) => (400, format!("a name is asked for as {{\"name\": ...}}: {e}")),
+            Err(e) => (
+                400,
+                format!("a name is asked for as {{\"name\": ...}}: {e}"),
+            ),
         }
     };
     // An admission laye already holds (409) is told too: it may have been made

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>laye</title>
+<style>
+  /* laye's look, as login.html has it. */
+  :root {
+    color-scheme: dark;
+    --ground: #050608;
+    --ink: #ddd;
+    --panel: rgba(20, 22, 28, 0.85);
+    --edge: #333;
+    --press: #2a1212;
+    --press-hover: #3a1818;
+    --press-ink: #f88;
+    --press-edge: #642;
+  }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    padding: 0 16px;
+    display: grid;
+    place-items: center;
+    background: radial-gradient(ellipse at 50% 30%, #0b1020 0%, var(--ground) 60%);
+    color: var(--ink);
+    font: 14px ui-monospace, Menlo, monospace;
+  }
+  main {
+    width: 100%;
+    max-width: 24rem;
+    padding: 1.5em 1.2em;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    text-align: center;
+  }
+  h1 { margin: 0 0 0.5em; font-weight: 400; letter-spacing: 0.4em; text-shadow: 0 0 12px rgba(255, 136, 136, 0.55); }
+  #who { overflow-wrap: anywhere; }
+  .presses { display: grid; gap: 0.75em; margin: 1.2em 0; }
+  button {
+    padding: 0.6em 1em;
+    background: var(--press);
+    color: var(--press-ink);
+    border: 1px solid var(--press-edge);
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: var(--press-hover); }
+  #said { min-height: 1.5em; margin: 0; overflow-wrap: anywhere; }
+  .bad { color: var(--press-ink); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>laye</h1>
+  <p id="who"></p>
+  <div class="presses" id="in">
+    <button type="button" id="signin">Sign in with your passkey</button>
+  </div>
+  <div class="presses" id="make" hidden></div>
+  <div class="presses" id="out" hidden>
+    <button type="button" id="signout">Sign out</button>
+  </div>
+  <p id="said"></p>
+</main>
+<script type="module">
+// "big piece of laye is wasm"
+// This browser's key is laye's own, kept by laye's wasm. A passkey is made on
+// what that key proved, and the key the passkey derives (the PRF) is laye's
+// wasm's to make and sign with.
+import load, * as laye from '/laye/web/laye_p2p.js';
+
+const CEREMONY = {{ceremony}};
+const SIGNERS = {{signers}};
+// Fixed forever, as QNTX's: change it and every passkey derives another key.
+const PRF_SALT = new TextEncoder().encode('qntx/passkey-owner/v1');
+
+const said = (words, bad) => {
+  const p = document.getElementById('said');
+  p.textContent = words;
+  p.className = bad ? 'bad' : '';
+};
+const b64url = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)))
+  .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+const unb64url = (s) => {
+  const t = s.replaceAll('-', '+').replaceAll('_', '/');
+  const raw = atob(t + '='.repeat((4 - t.length % 4) % 4));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0)).buffer;
+};
+const utf8 = (s) => new TextEncoder().encode(s);
+
+async function asked(path, body) {
+  const answer = await fetch(path, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    credentials: 'same-origin',
+  });
+  const read = await answer.json().catch(() => ({}));
+  if (!answer.ok) throw new Error(read.error || read.error_description || `laye answered ${answer.status}`);
+  return read;
+}
+
+function lastError() {
+  const all = JSON.parse(laye.errors() || '[]');
+  return all.length ? JSON.stringify(all[all.length - 1]) : '';
+}
+
+async function draw() {
+  let me = null;
+  try { me = await asked('/laye/passkey/me'); } catch { me = null; }
+  document.getElementById('who').textContent = me ? `${me.person} (${me.level})` : '';
+  document.getElementById('in').hidden = !!me;
+  document.getElementById('out').hidden = !me;
+  document.getElementById('make').hidden = !!me;
+  if (!me) await drawMake();
+}
+
+async function drawMake() {
+  const make = document.getElementById('make');
+  make.replaceChildren();
+  const held = JSON.parse(laye.bindings());
+  if (held.length) {
+    const press = document.createElement('button');
+    press.type = 'button';
+    press.textContent = 'Make a passkey as ' + held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
+    press.addEventListener('click', () => enrol().catch((e) => said(String(e.message || e), true)));
+    make.append(press);
+    return;
+  }
+  // No account proven to this browser's key yet: the provider ceremony proves one.
+  const { providers } = await (await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' })).json();
+  for (const p of providers.filter((p) => p.kind === 'redirect')) {
+    const press = document.createElement('button');
+    press.type = 'button';
+    press.textContent = 'Prove your ' + p.label + ' account';
+    press.addEventListener('click', () => {
+      const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
+      if (p.host_prompt) {
+        const host = prompt(p.host_prompt, p.host_placeholder);
+        if (!host) return;
+        go.set('host', host);
+      }
+      location.assign(CEREMONY + '/auth/binding/go?' + go);
+    });
+    make.append(press);
+  }
+}
+
+async function cameBack(ticket) {
+  history.replaceState(null, '', location.pathname);
+  const answer = await fetch(CEREMONY + '/auth/binding/result?ceremony=' + encodeURIComponent(ticket), { credentials: 'include' });
+  if (!answer.ok) throw new Error('the account was not proven: ' + answer.status);
+  const { binding } = await answer.json();
+  laye.accept_binding(JSON.stringify(binding));
+  if (!JSON.parse(laye.bindings()).length) throw new Error('laye did not keep the binding: ' + lastError());
+}
+
+/** The PRF's 32 bytes for this credential: on create where the platform gives
+ *  them, else on a get answering the same challenge (as QNTX-Web's prfSeed). */
+async function seedOf(credential, challenge) {
+  const onCreate = credential.getClientExtensionResults().prf;
+  if (onCreate?.results?.first) return new Uint8Array(onCreate.results.first);
+  if (!onCreate?.enabled) return null;
+  const got = await navigator.credentials.get({ publicKey: {
+    challenge, allowCredentials: [{ id: credential.rawId, type: 'public-key' }],
+    userVerification: 'required', extensions: { prf: { eval: { first: PRF_SALT } } },
+  } });
+  const onGet = got?.getClientExtensionResults().prf;
+  return onGet?.results?.first ? new Uint8Array(onGet.results.first) : null;
+}
+
+async function enrol() {
+  said('Proving this browser’s key...');
+  const { challenge } = await asked('/laye/challenge');
+  const signature = laye.sign(utf8(challenge));
+  if (!signature.length) throw new Error('laye did not sign: ' + lastError());
+  const options = await asked('/laye/passkey/enrol/begin', {
+    did: laye.did(), signature: b64url(signature), challenge, bindings: JSON.parse(laye.bindings()),
+  });
+  const text = options.publicKey.challenge;
+  options.publicKey.challenge = unb64url(text);
+  options.publicKey.user.id = unb64url(options.publicKey.user.id);
+  options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
+  said('Waiting for your passkey...');
+  const credential = await navigator.credentials.create(options);
+  const seed = await seedOf(credential, options.publicKey.challenge);
+  if (!seed) throw new Error('this authenticator cannot derive a key, so the passkey would belong to nobody');
+  const made = await asked('/laye/passkey/enrol/finish', {
+    id: credential.id, rawId: b64url(credential.rawId), type: credential.type,
+    response: {
+      clientDataJSON: b64url(credential.response.clientDataJSON),
+      attestationObject: b64url(credential.response.attestationObject),
+    },
+    user_did: laye.owner_did(seed),
+    user_did_signature: b64url(laye.owner_sign(seed, utf8(text))),
+  });
+  said('Your passkey is laye’s now: ' + made.person);
+  await draw();
+}
+
+async function signIn() {
+  const options = await asked('/laye/passkey/signin/begin', {});
+  const text = options.publicKey.challenge;
+  options.publicKey.challenge = unb64url(text);
+  options.publicKey.extensions = { prf: { eval: { first: PRF_SALT } } };
+  said('Waiting for your passkey...');
+  const got = await navigator.credentials.get(options);
+  const seed = got.getClientExtensionResults().prf?.results?.first;
+  const owner = seed ? {
+    user_did: laye.owner_did(new Uint8Array(seed)),
+    user_did_signature: b64url(laye.owner_sign(new Uint8Array(seed), utf8(text))),
+  } : {};
+  const answered = await asked('/laye/passkey/signin/finish', {
+    id: got.id, rawId: b64url(got.rawId), type: got.type,
+    response: {
+      clientDataJSON: b64url(got.response.clientDataJSON),
+      authenticatorData: b64url(got.response.authenticatorData),
+      signature: b64url(got.response.signature),
+      userHandle: got.response.userHandle ? b64url(got.response.userHandle) : '',
+    },
+    ...owner,
+  });
+  said('Signed in as ' + answered.person);
+  await draw();
+}
+
+document.getElementById('signin').addEventListener('click', () => signIn().catch((e) => said(String(e.message || e), true)));
+document.getElementById('signout').addEventListener('click', async () => {
+  await asked('/laye/passkey/out', {}).catch((e) => said(String(e.message || e), true));
+  said('Signed out');
+  await draw();
+});
+
+try {
+  await load();
+  await laye.init(JSON.stringify({ bootstrap_addrs: [], binding_signers: SIGNERS }));
+  if (!laye.did()) throw new Error('laye did not start: ' + lastError());
+  const ticket = new URLSearchParams(location.search).get('ceremony');
+  if (ticket) await cameBack(ticket);
+  await draw();
+} catch (e) {
+  said(String(e.message || e), true);
+}
+</script>
+</body>
+</html>

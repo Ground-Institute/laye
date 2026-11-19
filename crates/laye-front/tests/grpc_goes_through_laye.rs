@@ -125,6 +125,8 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         invitations_at: dir.join("invitations.jsonl"),
         ceremony_at: "https://node.example".into(),
         names: None,
+        passkeys: None,
+        web: None,
     }
 }
 
