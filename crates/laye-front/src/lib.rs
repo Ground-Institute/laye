@@ -443,7 +443,9 @@ async fn at_names(
             Err(e) => (400, format!("a name is asked for as {{\"name\": ...}}: {e}")),
         }
     };
-    if status == 200 {
+    // An admission laye already holds (409) is told too: it may have been made
+    // at another laye on the same etcd, and this QNTX not told of it.
+    if status == 200 || (status == 409 && path == ADMIT_PATH) {
         let told = Held {
             path: path.to_string(),
             headers: passed_on(parts),
