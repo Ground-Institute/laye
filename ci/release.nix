@@ -1,0 +1,43 @@
+# The release workflow, emitted to .github/workflows/release.yml and never edited by hand:
+#   nix eval --json --file ci/release.nix | jq . > .github/workflows/release.yml
+#
+# laye's browser key, as the package QNTX-Web and every other page loads.
+#
+# "decouple laye from QNTX, it run's independently from it, and it is no longer inside of QNTX, instead they are two pieces of software"
+#
+# A tag v* builds crates/laye-p2p for the browser and attaches it to that
+# tag's release as laye-p2p-<version>.tgz.
+{
+  name = "release";
+  on.push.tags = [ "v*" ];
+  permissions.contents = "write";
+  jobs.laye-p2p = {
+    runs-on = "ubuntu-latest";
+    steps = [
+      { uses = "actions/checkout@v5"; }
+      {
+        uses = "dtolnay/rust-toolchain@stable";
+        "with".targets = "wasm32-unknown-unknown";
+      }
+      {
+        uses = "jetli/wasm-pack-action@v0.4.0";
+        "with".version = "v0.13.1";
+      }
+      {
+        name = "Build laye-p2p for the browser";
+        working-directory = "crates/laye-p2p";
+        run = ''
+          wasm-pack build --target web
+          version="''${GITHUB_REF_NAME#v}"
+          cd pkg
+          npm pkg set version="$version"
+          npm pack --pack-destination "$GITHUB_WORKSPACE"
+        '';
+      }
+      {
+        uses = "softprops/action-gh-release@v2";
+        "with".files = "laye-p2p-*.tgz";
+      }
+    ];
+  };
+}
