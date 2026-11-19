@@ -474,3 +474,43 @@ async fn named_while_qntx_is_down_and_qntx_is_told() {
     let claims = jwt::read(got[1].authorization.strip_prefix("Signed ").unwrap()).unwrap();
     assert_eq!(claims.sub, did(&session));
 }
+
+/// A session admitted at one laye is admitted again at another on the same
+/// etcd: laye answers it is held, and that other laye's QNTX is told of it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_admission_held_elsewhere_is_told_to_this_qntx() {
+    let etcd = etcd("held").await;
+    let person = laye_me::fresh();
+    let (on_l, _l) = laye_front::start(
+        config(
+            free_addr().await,
+            &scratch("held-l"),
+            &etcd.at,
+            vec![did(&person)],
+        ),
+        laye_me::fresh(),
+    )
+    .await
+    .unwrap();
+    let k_qntx = free_addr().await;
+    let arrived = Arc::new(Mutex::new(Vec::new()));
+    let _qntx = qntx_at(k_qntx, arrived.clone()).await;
+    let (on_k, _k) = laye_front::start(
+        config(k_qntx, &scratch("held-k"), &etcd.at, vec![did(&person)]),
+        laye_me::fresh(),
+    )
+    .await
+    .unwrap();
+    let session = laye_me::fresh();
+
+    assert_eq!(admit(on_l.addr, &person, &session, "a").await.0, 200);
+    assert_eq!(admit(on_k.addr, &person, &session, "a").await.0, 409);
+    until("k's QNTX was never told", || {
+        arrived
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|a| a.path == "/auth/admit")
+    })
+    .await;
+}
