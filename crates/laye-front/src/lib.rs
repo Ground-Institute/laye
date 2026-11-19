@@ -275,6 +275,14 @@ fn person_asking(
     inner: &Inner,
     parts: &hyper::http::request::Parts,
 ) -> Result<(String, String), String> {
+    session_asking(inner, parts).map(|(person, level, _)| (person, level))
+}
+
+/// The person a request's session cookie is, their level, and until when.
+fn session_asking(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+) -> Result<(String, String, u64), String> {
     let token = parts
         .headers
         .get_all(hyper::header::COOKIE)
@@ -338,12 +346,22 @@ async fn as_person(
                 text,
             ));
         }
-        "/laye/passkey/me" if get => match person_asking(inner, parts) {
-            Ok((person, level)) => passkeys::Answer {
-                status: 200,
-                body: serde_json::json!({ "person": person, "level": level }),
-                session: None,
-            },
+        "/laye/passkey/me" if get => match session_asking(inner, parts) {
+            Ok((person, level, until)) => {
+                let shown = passkeys::shown_of(&keys.etcd, &person)
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default();
+                passkeys::Answer {
+                    status: 200,
+                    body: serde_json::json!({
+                        "person": person, "level": level, "until": until,
+                        "name": shown.name, "picture": shown.picture, "account": shown.account,
+                    }),
+                    session: None,
+                }
+            }
             Err(why) => passkeys::Answer {
                 status: 401,
                 body: serde_json::json!({ "error": why }),
@@ -352,7 +370,7 @@ async fn as_person(
         },
         "/laye/passkey/enrol/begin" if post => match serde_json::from_slice::<door::Login>(body) {
             Ok(login) => match laye_of(inner).first_half(&login) {
-                Ok(first) => keys.enrol_begin(first, now()),
+                Ok(first) => keys.enrol_begin(first, shown_in(body), now()),
                 Err((status, why)) => passkeys::Answer {
                     status,
                     body: serde_json::json!({ "error": why }),
@@ -456,6 +474,21 @@ async fn as_person(
                 return None;
             };
             return Some(json(code(status), body.to_string()));
+        }
+        "/laye/person" if post => {
+            // A person's name and photo, as the provider showed them: taken
+            // only with a binding that is theirs, signed by a key laye trusts.
+            let (person, _) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let (status, words) = shown_by(inner, keys, &person, body).await;
+            return Some(json(code(status), words.to_string()));
         }
         "/laye/passkey/out" if post => {
             let mut resp = json(StatusCode::OK, "{}");
@@ -567,6 +600,61 @@ async fn act_on(
     match held.act(&asked.did, &act, person, now()).await {
         Ok(after) => (200, serde_json::json!(after)),
         Err(why) => refused(409, why),
+    }
+}
+
+/// What a person is shown as, when a page sends it beside what it asks.
+fn shown_in(body: &[u8]) -> Option<passkeys::Shown> {
+    let asked: serde_json::Value = serde_json::from_slice(body).ok()?;
+    serde_json::from_value(asked.get("shown")?.clone()).ok()
+}
+
+/// Keeps what `person` is shown as, from the provider's answer to a ceremony
+/// that proved the account `person` is.
+async fn shown_by(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    person: &str,
+    body: &[u8],
+) -> (u16, serde_json::Value) {
+    #[derive(Deserialize)]
+    struct Asked {
+        binding: laye_me::SignedBinding,
+        shown: passkeys::Shown,
+    }
+    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let asked: Asked = match serde_json::from_slice(body) {
+        Ok(asked) => asked,
+        Err(e) => return refused(400, format!("this is {{\"binding\", \"shown\"}}: {e}")),
+    };
+    if asked.binding.claim.canonical_id != person {
+        return refused(403, format!("the account proven is not {person}"));
+    }
+    if asked.binding.verify().is_err()
+        || !inner
+            .config
+            .binding_signers
+            .contains(&door::hex(&asked.binding.signer_pubkey))
+    {
+        return refused(403, "the binding is not signed by a key laye trusts".into());
+    }
+    let value = match serde_json::to_vec(&asked.shown) {
+        Ok(value) => value,
+        Err(e) => return refused(500, e.to_string()),
+    };
+    match keys
+        .etcd
+        .txn(
+            &[],
+            vec![etcd::Op::Put(
+                format!("{}{person}", passkeys::PEOPLE),
+                value,
+            )],
+        )
+        .await
+    {
+        Ok(_) => (200, serde_json::json!(asked.shown)),
+        Err(why) => refused(503, why),
     }
 }
 

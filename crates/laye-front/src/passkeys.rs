@@ -29,6 +29,8 @@ use crate::jwt;
 
 /// Where a passkey is kept, by its credential id in base64url: `/passkeys/<id>`.
 pub const PASSKEYS: &str = "/passkeys/";
+/// What a person is shown as: `/people/<person>`.
+pub const PEOPLE: &str = "/people/";
 /// How long a ceremony may take, as QNTX allows one (ceremonyTimeout).
 const CEREMONY_LIFE: u64 = 300;
 /// How long a person's session lasts.
@@ -85,12 +87,26 @@ pub struct Passkey {
     pub at: u64,
 }
 
+/// What a person is shown as, as the provider showed them when they proved
+/// their account (QNTX `/auth/binding/result`): their name, their picture,
+/// and the account it came from.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Shown {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub picture: String,
+    #[serde(default)]
+    pub account: String,
+}
+
 enum Asked {
     /// A passkey made for this person.
     Enrol {
         person: String,
         level: &'static str,
         binding: Option<Box<SignedBinding>>,
+        shown: Option<Box<Shown>>,
     },
     /// A passkey answering, whoever's it is.
     SignIn,
@@ -344,14 +360,27 @@ impl Passkeys {
     }
 
     /// A passkey made for who the first half proved: what the browser is asked.
-    pub fn enrol_begin(&self, first: FirstHalf, now: u64) -> Answer {
+    pub fn enrol_begin(&self, first: FirstHalf, shown: Option<Shown>, now: u64) -> Answer {
         let (person, level, binding) = first;
         let handle = B64URL.encode(Sha256::digest(person.as_bytes()));
+        // What the device's passkey sheet calls it: the account and the name,
+        // as the person knows them, not the identity laye keys them by.
+        let account = shown
+            .as_ref()
+            .map(|s| s.account.clone())
+            .filter(|a| !a.is_empty())
+            .unwrap_or_else(|| person.clone());
+        let called = shown
+            .as_ref()
+            .map(|s| s.name.clone())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| account.clone());
         let challenge = self.begin(
             Asked::Enrol {
                 person: person.clone(),
                 level,
                 binding: binding.map(Box::new),
+                shown: shown.map(Box::new),
             },
             now,
         );
@@ -359,7 +388,7 @@ impl Passkeys {
             status: 200,
             body: json!({ "publicKey": {
                 "rp": { "id": self.at.rp_id, "name": "laye" },
-                "user": { "id": handle, "name": person, "displayName": person },
+                "user": { "id": handle, "name": account, "displayName": called },
                 "challenge": challenge,
                 "pubKeyCredParams": [
                     { "type": "public-key", "alg": EDDSA },
@@ -406,6 +435,7 @@ impl Passkeys {
             person,
             level,
             binding,
+            shown,
         }) = self.finish(&client.challenge, now)
         else {
             return Err((401, "laye began no such enrolment, or it is over".into()));
@@ -477,11 +507,12 @@ impl Passkeys {
         };
         let at = format!("{PASSKEYS}{}", B64URL.encode(id));
         let value = serde_json::to_vec(&kept).map_err(|e| (500, e.to_string()))?;
-        match self
-            .etcd
-            .txn(&[(&at, 0)], vec![Op::Put(at.clone(), value)])
-            .await
-        {
+        let mut ops = vec![Op::Put(at.clone(), value)];
+        if let Some(shown) = shown {
+            let shown = serde_json::to_vec(&*shown).map_err(|e| (500, e.to_string()))?;
+            ops.push(Op::Put(format!("{PEOPLE}{}", kept.person), shown));
+        }
+        match self.etcd.txn(&[(&at, 0)], ops).await {
             Ok(true) => Ok(kept),
             Ok(false) => Err((409, "laye already keeps this passkey".into())),
             Err(why) => Err((503, why)),
@@ -663,9 +694,19 @@ fn session(kept: &Passkey, laye: &str, key: &Keypair, now: u64) -> Result<String
     .map_err(|e| e.to_string())
 }
 
-/// The person a session is, when it is this laye's and still lasts: who, and
-/// their level.
-pub fn person_of(token: &str, laye: &str, now: u64) -> Result<(String, String), String> {
+/// What a person is shown as, when laye was told.
+pub async fn shown_of(etcd: &Etcd, person: &str) -> Result<Option<Shown>, String> {
+    match etcd.get(&format!("{PEOPLE}{person}")).await? {
+        Some(kv) => serde_json::from_slice(&kv.value)
+            .map(Some)
+            .map_err(|e| format!("{PEOPLE}{person} does not read: {e}")),
+        None => Ok(None),
+    }
+}
+
+/// The person a session is, when it is this laye's and still lasts: who,
+/// their level, and until when.
+pub fn person_of(token: &str, laye: &str, now: u64) -> Result<(String, String, u64), String> {
     let claims = jwt::read(token).map_err(|e| format!("the session does not verify: {e}"))?;
     if claims.iss != laye {
         return Err(format!(
@@ -679,5 +720,5 @@ pub fn person_of(token: &str, laye: &str, now: u64) -> Result<(String, String), 
     if claims.exp <= now {
         return Err("the session is over".into());
     }
-    Ok((claims.sub, claims.label))
+    Ok((claims.sub, claims.label, claims.exp))
 }

@@ -186,7 +186,11 @@ impl Devices<'_> {
         match self.waiting(user_code, now).await {
             Ok((w, _)) => (
                 200,
-                json!({ "label": w.label, "did": w.did, "user_code": w.user_code, "said": w.yes.is_some() }),
+                json!({
+                    "label": w.label, "did": w.did, "user_code": w.user_code,
+                    "said": w.yes.is_some(),
+                    "asked_at": w.until.saturating_sub(WAITS), "until": w.until,
+                }),
             ),
             Err(answer) => answer,
         }

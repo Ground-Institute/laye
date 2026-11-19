@@ -1004,3 +1004,72 @@ async fn one_session_says_to_another_through_laye_and_it_arrives() {
     let row = signed_get(front, "/am/statusline?format=json", &qntx_key).await;
     assert_eq!(row.body["items"], json!([]), "{}", row.text);
 }
+
+/// A person is shown by their name and photo, as the provider showed them,
+/// and laye takes those only with a binding that is that person's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_person_is_shown_by_name_and_photo_proven_with_their_binding() {
+    let etcd = etcd("shown").await;
+    let node = laye_me::fresh();
+    let browser = laye_me::fresh();
+    let front = laye(
+        "shown-q",
+        &etcd.at,
+        vec!["github:1739143".into()],
+        vec![hex(&public(&node))],
+    )
+    .await;
+    let mut passkey = Authenticator::new();
+    let held = [binding(&node, &browser, "github:1739143")];
+    assert_eq!(
+        enrol(front, AT_RP, &browser, &held, &passkey).await.status,
+        200
+    );
+    let session = sign_in(front, AT_RP, &mut passkey).await.cookie.unwrap();
+
+    let shown =
+        json!({ "name": "Brandon", "picture": "https://example.com/me.png", "account": "onf" });
+    let kept = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/person",
+        &session,
+        &json!({ "binding": held[0], "shown": shown }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept.status, 200, "{}", kept.text);
+    let me = ask(front, RP, "GET", "/laye/passkey/me", &session, "")
+        .await
+        .unwrap();
+    assert_eq!(me.body["name"], "Brandon", "{}", me.text);
+    assert_eq!(me.body["picture"], "https://example.com/me.png");
+    assert!(me.body["until"].as_u64().unwrap() > 0);
+
+    // Someone else's account, or a binding signed by a key laye does not trust, is refused.
+    let other = binding(&node, &browser, "github:1");
+    let refused = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/person",
+        &session,
+        &json!({ "binding": other, "shown": shown }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused.status, 403, "{}", refused.text);
+    let forged = binding(&laye_me::fresh(), &browser, "github:1739143");
+    let refused = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/person",
+        &session,
+        &json!({ "binding": forged, "shown": shown }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(refused.status, 403, "{}", refused.text);
+}

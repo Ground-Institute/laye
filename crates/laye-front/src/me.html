@@ -81,6 +81,12 @@
   main.closed { background: rgb(var(--glass-rgb) / 1); }
   main { transition: background-color 0.6s; }
   @media (prefers-reduced-motion: reduce) { main { transition: none; } }
+  #who { display: grid; grid-template-columns: auto 1fr; gap: 0.2em 0.8em; align-items: center; text-align: left; margin: 0.2em 0 0.8em; }
+  #who img, #who .initial { grid-row: span 2; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+  #who .initial { display: grid; place-items: center; background: var(--glass-thin); font-size: 18px; }
+  #who .name { font-size: 15px; overflow-wrap: anywhere; }
+  #who .line { color: var(--quiet); font-size: 12px; overflow-wrap: anywhere; }
+  .link { background: none; border: none; padding: 0; color: var(--quiet); text-decoration: underline; font-size: 12px; cursor: pointer; border-radius: 4px; }
   .tagline { margin: 0.6rem 0 0; color: var(--quiet); font-size: 12px; letter-spacing: 0.15em; }
   .trust { margin-top: 1em; padding-top: 0.8em; border-top: 1px solid var(--glass-border); }
   #who { margin: 0 0 0.5em; overflow-wrap: anywhere; }
@@ -121,16 +127,13 @@
 <p class="tagline">identity · authentication · network · A2A</p>
 <div class="symbol" aria-hidden="true">⏚</div>
 <main class="glass shadow-glass closed">
-  <p id="who"></p>
+  <div id="who" hidden></div>
   <div class="presses" id="in">
     <button type="button" class="glass-thin pressable" id="signin">Sign in with your passkey</button>
   </div>
   <div class="presses" id="make" hidden></div>
   <div class="presses" id="yes" hidden></div>
   <section id="waits" hidden></section>
-  <div class="presses" id="out" hidden>
-    <button type="button" class="glass-thin pressable" id="signout">Sign out</button>
-  </div>
   <p id="said" role="status" aria-live="polite"></p>
   <p class="quiet trust" id="where"></p>
 </main>
@@ -196,13 +199,19 @@ async function gather() {
     }
     return { me, held, providers };
   }
+  let prove = null;
+  if (!me.name) {
+    const answer = await fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' }).catch(() => null);
+    const providers = answer && answer.ok ? ((await answer.json()).providers || []).filter((p) => p.kind === 'redirect') : [];
+    prove = providerOf(me.person, providers) || null;
+  }
   const [shown, waits] = await Promise.all([
     asking
       ? asked('/laye/device/shown?user_code=' + encodeURIComponent(asking)).catch((e) => ({ error: String(e.message || e) }))
       : Promise.resolve(null),
     asked('/laye/collected').catch((e) => ({ error: String(e.message || e), collected: [] })),
   ]);
-  return { me, shown, collected: waits.collected || [], waitsError: waits.error };
+  return { me, prove, shown, collected: waits.collected || [], waitsError: waits.error };
 }
 
 function el(tag, text, className) {
@@ -262,35 +271,77 @@ function makeNodes(got) {
     const names = got.held.map((b) => b.claim.handle || b.claim.canonical_id).join(', ');
     return [press('Make a passkey as ' + names, () => pressed(() => enrol(), 'Proving this browser’s key...'))];
   }
-  return got.providers.map((p) => press('Prove your ' + p.label + ' account', () => {
-    const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
-    if (p.host_prompt) {
-      const host = prompt(p.host_prompt, p.host_placeholder);
-      if (!host) return;
-      go.set('host', host);
-    }
-    location.assign(CEREMONY + '/auth/binding/go?' + go);
-  }));
+  return got.providers.map((p) => press('Prove your ' + p.label + ' account', () => goProve(p)));
+}
+
+/** A DID as a person can compare it: its start and its end. */
+const short = (did) => did.length > 24 ? `${did.slice(8, 16)}…${did.slice(-6)}` : did;
+
+/** A moment in seconds, as this clock says it. */
+const clock = (secs) => when(new Date(secs * 1000).toISOString());
+
+/** Who is signed in, as they know themselves: their photo, their name, the
+ *  account it came from, how long the session lasts, and a way out. */
+function whoNodes(me) {
+  const name = me.name || me.account || me.person;
+  const face = me.picture ? el('img') : el('div', name.slice(0, 1).toUpperCase(), 'initial');
+  if (me.picture) {
+    face.src = me.picture;
+    face.alt = '';
+    face.referrerPolicy = 'no-referrer';
+  }
+  const account = me.account || me.person;
+  const parts = [];
+  if (account !== name) parts.push(account);
+  if (me.level === 'ROOT') parts.push('root');
+  parts.push(`signed in until ${clock(me.until)}`);
+  const line = el('div', parts.join(' · ') + ' · ', 'line');
+  const out = el('button', 'Not you? Sign out', 'link');
+  out.type = 'button';
+  out.addEventListener('click', () => pressed(async () => {
+    await asked('/laye/passkey/out', {});
+    return 'Signed out. Your passkey stays yours; sign in with it again any time.';
+  }, 'Signing out...'));
+  line.append(out);
+  return [face, el('div', name, 'name'), line];
+}
+
+/** The provider a person's account is at, to ask it for their name and photo. */
+function providerOf(person, providers) {
+  const at = person.startsWith('https://') ? 'mastodon' : person.split(':')[0];
+  return providers.find((p) => p.id === at);
+}
+
+function goProve(p) {
+  const go = new URLSearchParams({ provider: p.id, peer_pubkey_hex: laye.self_peer_id(), page: '/laye/me' });
+  if (p.host_prompt) {
+    const host = prompt(p.host_prompt, p.host_placeholder);
+    if (!host) return;
+    go.set('host', host);
+  }
+  location.assign(CEREMONY + '/auth/binding/go?' + go);
 }
 
 // A key asking to be yours, by the code it printed. Only your passkey session
-// says yes to it.
+// says yes to it, and before it does, it is told what that lets the key do.
 function yesNodes(shown) {
   if (!shown) return [];
   if (shown.error) return [el('p', shown.error, 'bad')];
   const nodes = [
-    el('p', `${shown.label} asks to be you.`),
+    el('p', `${shown.label} asks to be you. It asked ${clock(shown.asked_at)}.`),
+    el('p', 'Check this code is the one the key printed:', 'quiet'),
     el('p', shown.user_code, 'code'),
-    el('p', shown.did, 'quiet did'),
+    el('p', `key ${short(shown.did)}`, 'quiet'),
   ];
   if (shown.said) {
     nodes.push(el('p', 'You said yes to it.', 'quiet'));
-  } else {
-    nodes.push(press('Yes, this key is me', () => pressed(async () => {
-      const done = await asked('/laye/device/approve', { user_code: shown.user_code });
-      return `${done.label} is yours now.`;
-    }, 'Saying yes...')));
+    return nodes;
   }
+  nodes.push(el('p', `Saying yes lets it admit your sessions at laye and be named as you. The request closes ${clock(shown.until)}.`, 'quiet'));
+  nodes.push(press('Yes, this key is me', () => pressed(async () => {
+    const done = await asked('/laye/device/approve', { user_code: shown.user_code });
+    return `${done.label} is yours now.`;
+  }, 'Saying yes...')));
   return nodes;
 }
 
@@ -338,14 +389,18 @@ async function draw() {
   // Everything below is one synchronous change: the browser draws it once.
   const signedIn = !!got.me;
   document.querySelector('main').classList.toggle('closed', !signedIn);
-  document.getElementById('who').textContent = signedIn
-    ? `You are ${got.me.person}${got.me.level === 'ROOT' ? ', a root' : ''}.`
-    : '';
+  document.getElementById('who').hidden = !signedIn;
+  document.getElementById('who').replaceChildren(...(signedIn ? whoNodes(got.me) : []));
   document.getElementById('in').hidden = signedIn;
-  document.getElementById('out').hidden = !signedIn;
   document.getElementById('make').hidden = signedIn;
   document.getElementById('make').replaceChildren(...(signedIn ? [] : makeNodes(got)));
   const yes = signedIn ? yesNodes(got.shown) : [];
+  if (signedIn && got.prove) {
+    const show = el('button', `Show your name and photo here (asks ${got.prove.label})`, 'link');
+    show.type = 'button';
+    show.addEventListener('click', () => goProve(got.prove));
+    yes.push(show);
+  }
   document.getElementById('yes').hidden = !yes.length;
   document.getElementById('yes').replaceChildren(...yes);
   document.getElementById('waits').hidden = !signedIn;
@@ -361,9 +416,14 @@ async function cameBack(ticket) {
   history.replaceState(null, '', location.pathname);
   const answer = await fetch(CEREMONY + '/auth/binding/result?ceremony=' + encodeURIComponent(ticket), { credentials: 'include' });
   if (!answer.ok) throw new Error('the account was not proven: ' + answer.status);
-  const { binding } = await answer.json();
+  const { binding, name, picture } = await answer.json();
   laye.accept_binding(JSON.stringify(binding));
   if (!JSON.parse(laye.bindings()).length) throw new Error('laye did not keep the binding: ' + lastError());
+  // What the provider showed the person as, kept with the passkey they make,
+  // or now, when they are already signed in.
+  const shown = { name: name || '', picture: picture || '', account: binding.claim.handle || binding.claim.canonical_id };
+  try { sessionStorage.setItem('laye.shown', JSON.stringify(shown)); } catch { /* asked again next time */ }
+  await asked('/laye/person', { binding, shown }).catch(() => null);
 }
 
 /** The PRF's 32 bytes for this credential: on create where the platform gives
@@ -387,6 +447,7 @@ async function enrol() {
   if (!signature.length) throw new Error('laye did not sign: ' + lastError());
   const options = await asked('/laye/passkey/enrol/begin', {
     did: laye.did(), signature: b64url(signature), challenge, bindings: JSON.parse(laye.bindings()),
+    shown: storedShown(),
   });
   const text = options.publicKey.challenge;
   options.publicKey.challenge = unb64url(text);
@@ -412,6 +473,11 @@ async function enrol() {
   });
   remember(credential.id);
   return 'Your passkey is made, and you are signed in.';
+}
+
+// What the provider last showed this person as, in this tab.
+function storedShown() {
+  try { return JSON.parse(sessionStorage.getItem('laye.shown') || 'null'); } catch { return null; }
 }
 
 // The passkeys this browser made here, so a sign-in names them alone.
@@ -467,10 +533,6 @@ async function sayFailure(e) {
   said(why, true);
 }
 document.getElementById('signin').addEventListener('click', () => pressed(() => signIn(), 'Waiting for your passkey...'));
-document.getElementById('signout').addEventListener('click', () => pressed(async () => {
-  await asked('/laye/passkey/out', {});
-  return 'Signed out. Your passkey stays yours; sign in with it again any time.';
-}, 'Signing out...'));
 
 // Where the person is, and what laye holds of them: said, not implied.
 document.getElementById('where').textContent =
