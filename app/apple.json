@@ -1,0 +1,24 @@
+{
+  "profile": "laye",
+  "ids": {
+    "": [
+      "AUTOFILL_CREDENTIAL_PROVIDER",
+      "ASSOCIATED_DOMAINS",
+      "APP_ATTEST",
+      "APP_GROUPS",
+      "DATA_PROTECTION",
+      "PUSH_NOTIFICATIONS",
+      "USERNOTIFICATIONS_TIMESENSITIVE",
+      "APPLE_ID_AUTH",
+      "TAP_TO_DISPLAY_ID",
+      "VERIFIABLE_CREDENTIAL_TYPES",
+      "LOCATION_PUSH_SERVICE_EXT",
+      "TRUST_INSIGHTS_BASE"
+    ],
+    ".island": [],
+    ".credentials": [
+      "AUTOFILL_CREDENTIAL_PROVIDER"
+    ],
+    ".location": []
+  }
+}

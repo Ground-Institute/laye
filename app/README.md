@@ -39,24 +39,23 @@ only to an origin one of its doors names in `am.toml`, so q's
 origins = ["https://laye.ground.institute", "laye://door"]
 ```
 
-## Taken from QNTX-App
+## Taken from teranos/ios-common
 
-- `sheet/` is QNTX-App's `sheet/`: `ASWebAuthenticationSession`, one command, `run`.
-- `Info.ios.plist` answers export compliance in the bundle, as QNTX-App's does.
+The tag `app/Cargo.toml` names for `sheet` is the ios-common `ci/app.nix`
+imports: its `ios` job is ios-common's `ci/ios.nix`, with laye's scene as the
+page. Every workflow is emitted from `ci/*.nix` and never edited by hand.
+
+- `sheet`: `ASWebAuthenticationSession`, one command, `run`.
+- `apple/apple.py`: laye's App IDs and capabilities (`apple.json`), and the profile.
+- `apple/ios-project.py`: signing against the profile instead of an account.
+- `apple/upload.sh` and `apple/delivered.py`: to TestFlight, and green once testers can install.
+
+The island comes to ios-common next (`PLAN.md`, `P2P2A2A_A_003_05`).
+
+From QNTX-App, as it is there:
+
+- `Info.ios.plist` answers export compliance in the bundle.
 - The Tauri, opener and deep-link versions are the ones QNTX-App pins.
-
-These move into a repo of their own that both apps use (`PLAN.md`, `P2P2A2A_A_003_09`):
-
-- The island: QNTX-App's `island/` and its CI.
-- `sheet/`, which is the same code in both apps.
-- The generic steps of QNTX-App's TestFlight pipeline (`ci/testflight.nix`):
-  - signing against a profile instead of an account (`.github/scripts/ios-project.py`);
-  - registering App IDs and the profile (`ci/apple.py` here);
-  - uploading with `xcrun altool --upload-package`, which names the app by `APPLE_APP_ID`;
-  - waiting until App Store Connect says testers can install the build (`.github/scripts/delivered.py`).
-
-  Its other steps are QNTX's own: checking out QNTX and QNTX-Web, taking the
-  version from QNTX's newest tag, and the share extension.
 
 ## Apple
 
@@ -68,7 +67,7 @@ What Apple holds for laye, team `88645J88Q8`:
 | Services ID, named Ground Institute laye service: Sign in with Apple on the web, returning to `https://laye.ground.institute/auth/binding/callback` | `services.laye.ground.institute` |
 | Sign in with Apple key, primary App ID `laye.ground.institute` | `B25XSNYP25`; the `.p8` is SSM SecureString `/laye/apple/private-key` in q's account |
 
-The App ID's capabilities are `P2P2A2A_A_003_01` in PLAN.md.
+The App IDs' capabilities are `apple.json`, and `P2P2A2A_A_003_01` in PLAN.md.
 
 Still done by a person:
 
@@ -78,4 +77,4 @@ Still done by a person:
   - `IOS_CERTIFICATE`, `IOS_CERTIFICATE_PASSWORD`
   - `APPLE_API_KEY`, `APPLE_API_ISSUER`, `APPLE_API_KEY_CONTENT`
 
-The provisioning profile is made by CI (`ci/apple.py`) against the certificate in `IOS_CERTIFICATE`.
+The provisioning profile is made by CI (ios-common's `apple/apple.py`) against the certificate in `IOS_CERTIFICATE`.
