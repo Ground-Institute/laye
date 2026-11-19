@@ -54,6 +54,7 @@
   button:hover { background: var(--press-hover); }
   #said { min-height: 1.5em; margin: 0; }
   .bad { color: var(--press-ink); }
+  a.quiet { color: #889; text-decoration: none; padding: 0.3em; }
 </style>
 </head>
 <body>
@@ -169,6 +170,13 @@ async function draw() {
     });
     list.append(button);
   }
+  // The laye app holds a key and the account bound to it: the journey is
+  // handed to it, and it answers laye in the app's own name.
+  const app = document.createElement('a');
+  app.href = 'laye://sign?' + journey;
+  app.textContent = 'Open laye';
+  app.className = 'quiet';
+  list.append(app);
   const keyButton = document.createElement('button');
   keyButton.type = 'button';
   keyButton.textContent = 'Sign in with this browser’s key';
