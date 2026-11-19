@@ -14,11 +14,12 @@ laye-peer = { path = "../laye-peer" }
 libp2p-identity = { version = "=0.2.14", features = ["ed25519"] }
 sacred-error.workspace = true
 thiserror.workspace = true
+a2a = { package = "a2a-lf", version = "=0.4.2" }
 base64 = "=0.22.1"
 bytes = "=1.12.1"
 http-body-util = "=0.1.4"
-hyper = { version = "=1.10.1", features = ["server", "client", "http1"] }
-hyper-util = { version = "=0.1.20", features = ["tokio", "client-legacy", "http1"] }
+hyper = { version = "=1.10.1", features = ["server", "client", "http1", "http2"] }
+hyper-util = { version = "=0.1.20", features = ["tokio", "client-legacy", "server", "server-auto", "http1", "http2"] }
 rand = "=0.8.5"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = "=1.0.143"

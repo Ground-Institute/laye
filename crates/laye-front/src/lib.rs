@@ -11,6 +11,8 @@
 // "AND LAYE OWNS IDENTITY"
 // "BUT LAYE DOES NOT REALLY OWN USER, THE QNTX WAY"
 
+pub mod a2a_card;
+pub mod a2a_spoken;
 pub mod door;
 pub mod invitations;
 mod issuer;
@@ -100,6 +102,8 @@ struct Inner {
     key: Keypair,
     did: String,
     client: Client<HttpConnector, Full<Bytes>>,
+    /// QNTX over HTTP/2 without TLS, for what arrived in HTTP/2: gRPC.
+    h2c: Client<HttpConnector, Full<Bytes>>,
     /// Signatures presented, by id, until they expire: each is spent once.
     seen: Mutex<HashMap<String, u64>>,
     held: Mutex<Vec<Held>>,
@@ -130,6 +134,9 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
         key,
         did: did.clone(),
         client: Client::builder(TokioExecutor::new()).build_http(),
+        h2c: Client::builder(TokioExecutor::new())
+            .http2_only(true)
+            .build_http(),
         seen: Mutex::new(HashMap::new()),
         held: Mutex::new(held),
         issued: issuer::Issued::default(),
@@ -147,9 +154,11 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                             let inner = inner.clone();
                             async move { Ok::<_, Infallible>(answer(&inner, req).await) }
                         });
-                        if let Err(e) = hyper::server::conn::http1::Builder::new()
-                            .serve_connection(TokioIo::new(stream), service)
-                            .with_upgrades()
+                        // HTTP/1, and HTTP/2 without TLS: gRPC is HTTP/2, and
+                        // arrives from the front door that ended TLS without it,
+                        // as QNTX takes it (server/lifecycle.go).
+                        if let Err(e) = hyper_util::server::conn::auto::Builder::new(TokioExecutor::new())
+                            .serve_connection_with_upgrades(TokioIo::new(stream), service)
                             .await
                         {
                             eprintln!("laye-front: a connection ended: {e}");
@@ -278,6 +287,17 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         return answered;
     }
 
+    // The card is laye's own, QNTX up or not: laye is where agents are reached.
+    if is_the_card(&parts) {
+        return match a2a_card::card(origin_of(inner, &parts), &inner.did, &inner.key) {
+            Ok(card) => json(StatusCode::OK, card),
+            Err(why) => said(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("laye's card was not made: {why}"),
+            ),
+        };
+    }
+
     let presented = parts
         .headers
         .get(hyper::header::AUTHORIZATION)
@@ -328,6 +348,7 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
 
     match forward(
         inner,
+        parts.version,
         &parts.method,
         &path,
         &headers,
@@ -338,11 +359,12 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     {
         Ok(resp) => resp,
         Err(why) => {
-            let is_a_send = parts.method == hyper::Method::POST
-                && path.starts_with("/a2a/")
-                && path.ends_with("/message:send");
-            match subject {
-                Some(subject) if is_a_send => keep(inner, path, headers, subject, &body),
+            let send = (parts.method == hyper::Method::POST)
+                .then(|| a2a_spoken::send_of(&path, &body))
+                .flatten();
+            match (subject, send) {
+                (Some(subject), Some(send)) => keep(inner, path, headers, subject, &body, &send),
+                _ if is_grpc(&parts) => unavailable_over_grpc(&why),
                 _ => said(
                     StatusCode::SERVICE_UNAVAILABLE,
                     format!("QNTX did not answer, and laye is still here: {why}"),
@@ -350,6 +372,73 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
             }
         }
     }
+}
+
+fn is_grpc(parts: &hyper::http::request::Parts) -> bool {
+    parts
+        .headers
+        .get(hyper::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("application/grpc"))
+}
+
+/// QNTX not answering, as gRPC says it: UNAVAILABLE, in a response of
+/// headers only (gRPC over HTTP/2, "Trailers-Only").
+fn unavailable_over_grpc(why: &str) -> Response<Body> {
+    let mut resp = Response::new(whole(Bytes::new()));
+    let headers = resp.headers_mut();
+    headers.insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/grpc"),
+    );
+    headers.insert("grpc-status", hyper::header::HeaderValue::from_static("14"));
+    // Percent-encoded as gRPC says: what is not printable ASCII, and %.
+    let message: String = format!("QNTX did not answer, and laye is still here: {why}")
+        .bytes()
+        .map(|b| match b {
+            b' '..=b'~' if b != b'%' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    if let Ok(message) = hyper::header::HeaderValue::from_str(&message) {
+        headers.insert("grpc-message", message);
+    }
+    resp
+}
+
+fn is_the_card(parts: &hyper::http::request::Parts) -> bool {
+    parts.method == hyper::Method::GET && parts.uri.path() == a2a_spoken::CARD_PATH
+}
+
+/// The public origin a request came to, by its host: the first laye takes
+/// requests for when its host names none of them.
+fn origin_of<'a>(inner: &'a Inner, parts: &hyper::http::request::Parts) -> &'a str {
+    let host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .or_else(|| parts.uri.authority().map(|a| a.as_str()))
+        .unwrap_or_default();
+    let origins = &inner.config.public_origins;
+    origins
+        .iter()
+        .find(|origin| {
+            origin
+                .split_once("://")
+                .is_some_and(|(_, name)| name == host)
+        })
+        .or_else(|| origins.first())
+        .map_or("", String::as_str)
+}
+
+fn json(status: StatusCode, body: impl Into<Bytes>) -> Response<Body> {
+    let mut resp = Response::new(whole(body));
+    *resp.status_mut() = status;
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("application/json"),
+    );
+    resp
 }
 
 /// An upgrade, asked of QNTX as this request was, and once QNTX switched,
@@ -483,6 +572,7 @@ fn carried(inner: &Inner, subject: &str) -> Result<String, String> {
 /// The request, handed to QNTX. Err is QNTX not answering at all.
 async fn forward(
     inner: &Inner,
+    version: hyper::Version,
     method: &hyper::Method,
     path: &str,
     headers: &[(String, String)],
@@ -500,7 +590,18 @@ async fn forward(
         out = out.header(hyper::header::AUTHORIZATION, signed);
     }
     let out = out.body(Full::new(body)).map_err(|e| e.to_string())?;
-    let resp = inner.client.request(out).await.map_err(|e| e.to_string())?;
+    // gRPC is HTTP/2, however it reached laye: a front door that ended TLS
+    // hands it on in HTTP/1.1 (Caddy's reverse_proxy does), and QNTX's gRPC
+    // refuses that ("gRPC requires HTTP/2").
+    let grpc = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("content-type") && value.starts_with("application/grpc")
+    });
+    let client = if version == hyper::Version::HTTP_2 || grpc {
+        &inner.h2c
+    } else {
+        &inner.client
+    };
+    let resp = client.request(out).await.map_err(|e| e.to_string())?;
     // QNTX's answer goes on as it comes: a stream of live output is not held
     // back until it ends.
     Ok(resp.map(BodyExt::boxed))
@@ -516,13 +617,14 @@ fn whole(bytes: impl Into<Bytes>) -> Body {
 }
 
 /// What was said while QNTX did not answer, kept, and answered as a Task that
-/// has not been received yet.
+/// has not been received yet, in the version and binding it was said in.
 fn keep(
     inner: &Inner,
     path: String,
     headers: Vec<(String, String)>,
     subject: String,
     body: &Bytes,
+    send: &a2a_spoken::Send,
 ) -> Response<Body> {
     let held = Held {
         path,
@@ -540,13 +642,7 @@ fn keep(
         );
     }
     let id = format!("laye-held-{}-{}", now(), all.len());
-    said(
-        StatusCode::OK,
-        serde_json::json!({
-            "task": { "id": id, "status": { "state": "TASK_STATE_SUBMITTED" } }
-        })
-        .to_string(),
-    )
+    json(StatusCode::OK, a2a_spoken::submitted(send, &id))
 }
 
 /// What was kept, handed to QNTX in the order it was said, until QNTX does
@@ -567,6 +663,7 @@ async fn hand_over(inner: &Inner) {
         };
         let handed = forward(
             inner,
+            hyper::Version::HTTP_11,
             &hyper::Method::POST,
             &first.path,
             &first.headers,
@@ -632,8 +729,13 @@ fn save(path: &std::path::Path, all: &[Held]) -> Result<(), String> {
         text.push_str(&serde_json::to_string(held).map_err(|e| e.to_string())?);
         text.push('\n');
     }
+    write_whole(path, text.as_bytes())
+}
+
+/// `bytes`, written beside `path` and moved over it.
+fn write_whole(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     let mut beside = path.as_os_str().to_owned();
     beside.push(".new");
-    std::fs::write(&beside, text).map_err(|e| format!("{}: {e}", path.display()))?;
+    std::fs::write(&beside, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     std::fs::rename(&beside, path).map_err(|e| format!("{}: {e}", path.display()))
 }

@@ -268,6 +268,9 @@ async fn what_laye_cannot_verify_never_reaches_qntx() {
     assert_eq!(arrived.lock().unwrap().len(), 1);
 }
 
+/// A send in A2A 1.0, over HTTP+JSON.
+const SAID_WHILE_DOWN: &str = r#"{"message":{"messageId":"m-1","role":"ROLE_USER","parts":[{"text":"said while QNTX was down"}]}}"#;
+
 /// What a session says while QNTX is down is kept by laye, and arrives once
 /// QNTX is back, though laye itself restarted in between.
 #[tokio::test(flavor = "multi_thread")]
@@ -284,7 +287,7 @@ async fn qntx_can_go_down_while_laye_is_still_there() {
     let (status, body) = say(
         front.addr,
         &format!("Signed {}", session_signs(&session)),
-        "said while QNTX was down",
+        SAID_WHILE_DOWN,
     )
     .await;
     assert_eq!(status, 200, "{body}");
@@ -306,7 +309,7 @@ async fn qntx_can_go_down_while_laye_is_still_there() {
     let got = arrived.lock().unwrap().clone();
     assert_eq!(got.len(), 1);
     assert_eq!(got[0].path, "/a2a/Slate/message:send");
-    assert_eq!(got[0].body, b"said while QNTX was down");
+    assert_eq!(got[0].body, SAID_WHILE_DOWN.as_bytes());
     let claims = jwt::read(got[0].authorization.strip_prefix("Signed ").unwrap()).unwrap();
     assert_eq!(claims.iss, laye_peer::did_of(&laye_key).unwrap());
     assert_eq!(claims.sub, laye_peer::did_of(&session).unwrap());
