@@ -41,7 +41,9 @@ origins = ["https://laye.ground.institute", "laye://door"]
 
 ## Taken from teranos/ios-common
 
-The tag `app/Cargo.toml` names for `sheet` is the one CI runs `apple/` from.
+The tag `app/Cargo.toml` names for `sheet` is the ios-common `ci/app.nix`
+imports: its `ios` job is ios-common's `ci/ios.nix`, with laye's scene as the
+page. Every workflow is emitted from `ci/*.nix` and never edited by hand.
 
 - `sheet`: `ASWebAuthenticationSession`, one command, `run`.
 - `apple/apple.py`: laye's App IDs and capabilities (`apple.json`), and the profile.
