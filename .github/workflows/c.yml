@@ -1,0 +1,34 @@
+{
+  "concurrency": {
+    "cancel-in-progress": false,
+    "group": "c"
+  },
+  "jobs": {
+    "deploy": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v5"
+        },
+        {
+          "name": "Deploy c/ to C",
+          "uses": "cloudflare/wrangler-action@v3",
+          "with": {
+            "accountId": "1a473b8ef17b2da06c81cfddb5da691a",
+            "apiToken": "${{ secrets.CLOUDFLARE_API_TOKEN }}",
+            "workingDirectory": "c",
+            "wranglerVersion": "4.156.0"
+          }
+        }
+      ]
+    }
+  },
+  "name": "c",
+  "on": {
+    "push": {
+      "branches": [
+        "c-stack"
+      ]
+    }
+  }
+}

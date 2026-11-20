@@ -1,0 +1,30 @@
+# The workflow that deploys C, emitted to .github/workflows/c.yml and never edited by hand:
+#   nix eval --json --file ci/c.nix | jq . > .github/workflows/c.yml
+#
+# "right, but c would be deployed from c-stack, you would say"
+#
+# A push to c-stack deploys c/ to C, the Worker c on Cloudflare.
+{
+  name = "c";
+  on.push.branches = [ "c-stack" ];
+  concurrency = {
+    group = "c";
+    cancel-in-progress = false;
+  };
+  jobs.deploy = {
+    runs-on = "ubuntu-latest";
+    steps = [
+      { uses = "actions/checkout@v5"; }
+      {
+        name = "Deploy c/ to C";
+        uses = "cloudflare/wrangler-action@v3";
+        "with" = {
+          apiToken = "\${{ secrets.CLOUDFLARE_API_TOKEN }}";
+          accountId = "1a473b8ef17b2da06c81cfddb5da691a";
+          wranglerVersion = "4.156.0";
+          workingDirectory = "c";
+        };
+      }
+    ];
+  };
+}
