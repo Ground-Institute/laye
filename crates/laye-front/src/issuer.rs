@@ -13,6 +13,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+use laye_me::SignedBinding;
+
 use crate::invitations::{Account, Invitations};
 use crate::{door, jwt};
 
@@ -51,8 +53,8 @@ struct Token {
 }
 
 /// QNTX's levels (internal/access): a root, or somebody a root invited.
-const ROOT: &str = "ROOT";
-const USER: &str = "USER";
+pub(crate) const ROOT: &str = "ROOT";
+pub(crate) const USER: &str = "USER";
 
 #[derive(Default)]
 pub(crate) struct Issued {
@@ -415,6 +417,95 @@ impl Laye<'_> {
                 "expires_in": TOKEN_LIFE,
             }),
         )
+    }
+
+    /// The challenge laye issued, spent once. Whether it was laye's and fresh.
+    fn spend(&self, challenge: &str) -> bool {
+        self.issued
+            .challenges
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(challenge)
+            .is_some_and(|until| until > self.now)
+    }
+
+    /// Who a login proves, for a passkey to be made on: a root, or the account
+    /// an invitation lets in, and the binding that reached them. The binding is
+    /// kept with the passkey, so laye asks it again at every sign-in without
+    /// the ceremony that made it.
+    pub(crate) fn first_half(
+        &self,
+        presented: &door::Login,
+    ) -> Result<(String, &'static str, Option<SignedBinding>), (u16, String)> {
+        if !self.spend(&presented.challenge) {
+            return Err((401, "laye issued no such challenge, or it is spent".into()));
+        }
+        let vouched = door::vouched(presented, self.signers).map_err(|why| (403, why))?;
+        if self.roots.contains(&presented.did) {
+            return Ok((presented.did.clone(), ROOT, None));
+        }
+        if let Some(b) = vouched
+            .iter()
+            .find(|b| self.roots.contains(&b.claim.canonical_id))
+        {
+            return Ok((b.claim.canonical_id.clone(), ROOT, Some((*b).clone())));
+        }
+        match self.invitations.admit(&vouched) {
+            Ok(Some(account)) => {
+                let binding = vouched
+                    .iter()
+                    .find(|b| b.claim.canonical_id == account)
+                    .map(|b| (*b).clone());
+                Ok((account, USER, binding))
+            }
+            Ok(None) => Err((
+                403,
+                "nothing presented is a root, or an account a root invited".into(),
+            )),
+            Err(why) => Err((500, why)),
+        }
+    }
+
+    /// Whether what a passkey was made on still holds, asked now: the binding
+    /// still its signer's, the signer still trusted, the account still a root
+    /// or still let in. Else why not.
+    pub(crate) fn still_vouched(
+        &self,
+        person: &str,
+        level: &str,
+        binding: Option<&SignedBinding>,
+    ) -> Result<(), String> {
+        if let Some(b) = binding {
+            b.verify().map_err(|e| {
+                format!("the binding {person} was reached by no longer verifies: {e:?}")
+            })?;
+            if !self.signers.contains(&door::hex(&b.signer_pubkey)) {
+                return Err(format!(
+                    "the binding {person} was reached by is signed by a key laye no longer trusts"
+                ));
+            }
+            if b.claim.canonical_id != person {
+                return Err(format!(
+                    "the binding kept is {}'s, not {person}'s",
+                    b.claim.canonical_id
+                ));
+            }
+        }
+        let held =
+            match level {
+                ROOT => self.roots.iter().any(|r| r == person),
+                USER => self.invitations.list().iter().any(|inv| {
+                    inv.state() == "accepted" && inv.accepted_by.as_deref() == Some(person)
+                }),
+                _ => false,
+            };
+        if held {
+            Ok(())
+        } else {
+            Err(format!(
+                "{person} is no longer a root, or let in by an invitation"
+            ))
+        }
     }
 
     /// Who a token is, to the node it was issued for.

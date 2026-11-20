@@ -35,7 +35,12 @@ struct World {
     node: laye_me::Keypair,
     /// What vouches for an account: the provider ceremony's key.
     signer: laye_me::Keypair,
+    /// laye's own key, which signs a person's passkey session.
+    laye: laye_me::Keypair,
 }
+
+/// A root whose identity is an account, as on q.
+const ROOT_ACCOUNT: &str = "google:110106507016968762213";
 
 fn now() -> u64 {
     SystemTime::now()
@@ -60,6 +65,7 @@ async fn world(name: &str) -> World {
     let root = laye_me::fresh();
     let node = laye_me::fresh();
     let signer = laye_me::fresh();
+    let laye = laye_me::fresh();
     let dir = std::env::temp_dir().join(format!("laye-invites-{name}-{}", std::process::id()));
     if let Err(e) = std::fs::remove_dir_all(&dir) {
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound, "{e}");
@@ -72,7 +78,7 @@ async fn world(name: &str) -> World {
             qntx_did: did(&node),
             public_origins: vec![ISSUER.into()],
             held_at: dir.join("held.jsonl"),
-            root_identities: vec![did(&root)],
+            root_identities: vec![did(&root), ROOT_ACCOUNT.into()],
             binding_signers: vec![hex(&public(&signer))],
             issuer: ISSUER.into(),
             nodes: vec![Node {
@@ -82,8 +88,10 @@ async fn world(name: &str) -> World {
             invitations_at: dir.join("invitations.jsonl"),
             ceremony_at: "https://node.example".into(),
             names: None,
+            passkeys: None,
+            web: None,
         },
-        laye_me::fresh(),
+        laye.clone(),
     )
     .await
     .unwrap();
@@ -93,7 +101,54 @@ async fn world(name: &str) -> World {
         root,
         node,
         signer,
+        laye,
     }
+}
+
+/// The cookie laye's page holds once a person pressed their passkey.
+fn session_of(w: &World, person: &str, level: &str) -> String {
+    let token = jwt::sign(
+        &w.laye,
+        &jwt::Claims {
+            iss: did(&w.laye),
+            sub: person.into(),
+            aud: vec!["laye person".into()],
+            exp: now() + 600,
+            iat: now(),
+            jti: jwt::fresh_jti(),
+            label: level.into(),
+        },
+    )
+    .unwrap();
+    format!("laye_person={token}")
+}
+
+/// What laye's page asks of invitations, in the person's passkey session.
+async fn in_session(
+    w: &World,
+    cookie: &str,
+    path: &str,
+    body: Option<serde_json::Value>,
+) -> (u16, serde_json::Value) {
+    let stream = tokio::net::TcpStream::connect(w.at).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let req = Request::builder()
+        .method(if body.is_some() { "POST" } else { "GET" })
+        .uri(path)
+        .header("host", "laye.example")
+        .header("content-type", "application/json")
+        .header("cookie", cookie)
+        .body(Full::new(Bytes::from(
+            body.map(|b| b.to_string()).unwrap_or_default(),
+        )))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    let status = resp.status().as_u16();
+    let said = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&said).unwrap_or_default())
 }
 
 async fn ask(
@@ -377,4 +432,45 @@ async fn only_a_root_invites() {
         serde_json::json!({ "accounts": [{ "provider": "github", "account": "github:42" }] });
     let (status, _) = ask(w.at, "POST", "/laye/invitations", None, asked.to_string()).await;
     assert_eq!(status, 401);
+}
+
+/// "and i own the invites"
+/// The root is an account and holds no key laye knows: it invites, sees,
+/// cancels and kicks from laye's page, in its passkey session.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_root_invites_and_kicks_from_its_passkey_session() {
+    let w = world("session").await;
+    let root = session_of(&w, ROOT_ACCOUNT, "ROOT");
+    let asked =
+        serde_json::json!({ "accounts": [{ "provider": "github", "account": "github:42" }] });
+    let (status, inv) = in_session(&w, &root, "/laye/invitations", Some(asked)).await;
+    assert_eq!(status, 200, "{inv}");
+    assert_eq!(inv["invited_by"], ROOT_ACCOUNT);
+
+    let (status, listed) = in_session(&w, &root, "/laye/invitations", None).await;
+    assert_eq!(status, 200, "{listed}");
+    assert_eq!(listed["invitations"][0]["id"], inv["id"]);
+
+    let (device, binding) = friend_holding(&w, "github", "github:42");
+    let token = signs_in(&w, &device, &binding)
+        .await
+        .expect("the friend was not let in");
+    let id = serde_json::json!({ "id": inv["id"] });
+    let (status, kicked) = in_session(&w, &root, "/laye/invitations/withdraw", Some(id)).await;
+    assert_eq!(status, 200, "{kicked}");
+    assert!(kicked["kicked_at"].is_u64(), "{kicked}");
+    assert_eq!(who_is(&w, &token).await["active"], false);
+}
+
+/// A person who is not a root, in their own session, invites nobody.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_session_that_is_not_a_root_invites_nobody() {
+    let w = world("session-user").await;
+    let friend = session_of(&w, "github:42", "USER");
+    let asked =
+        serde_json::json!({ "accounts": [{ "provider": "github", "account": "github:7" }] });
+    let (status, _) = in_session(&w, &friend, "/laye/invitations", Some(asked)).await;
+    assert_eq!(status, 403);
+    let (status, _) = in_session(&w, &friend, "/laye/invitations", None).await;
+    assert_eq!(status, 403);
 }

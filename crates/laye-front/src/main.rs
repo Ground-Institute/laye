@@ -23,6 +23,10 @@ struct File {
     qntx: Qntx,
     #[serde(default)]
     names: Option<laye_front::NamesAt>,
+    #[serde(default)]
+    passkeys: Option<laye_front::passkeys::PasskeysAt>,
+    #[serde(default)]
+    web: Option<std::path::PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +99,8 @@ async fn main() {
             invitations_at: file.invitations,
             ceremony_at: file.ceremony.trim_end_matches('/').to_string(),
             names: file.names,
+            passkeys: file.passkeys,
+            web: file.web,
         },
         key,
     )

@@ -13,12 +13,15 @@
 
 pub mod a2a_card;
 pub mod a2a_spoken;
+pub mod collected;
+pub mod devices;
 pub mod door;
 pub mod etcd;
 pub mod invitations;
 mod issuer;
 pub mod jwt;
 pub mod names;
+pub mod passkeys;
 
 pub use issuer::Node;
 
@@ -85,6 +88,11 @@ pub struct Config {
     /// Where laye keeps who is admitted and the names sessions hold. None
     /// leaves both to QNTX.
     pub names: Option<NamesAt>,
+    /// laye's passkeys, kept in the etcd names are. None makes none.
+    pub passkeys: Option<passkeys::PasskeysAt>,
+    /// Where laye's wasm is, for laye's own page: laye-web. None is beside
+    /// the binary, at ../share/laye/web.
+    pub web: Option<PathBuf>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -124,6 +132,8 @@ struct Inner {
     issued: issuer::Issued,
     invitations: invitations::Invitations,
     names: Option<names::Names>,
+    passkeys: Option<passkeys::Passkeys>,
+    web: Option<PathBuf>,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -144,12 +154,34 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     let addr = listener
         .local_addr()
         .map_err(|e| laye_peer::error("listen", "laye's address is not known", e.to_string()))?;
-    let client: Client<HttpConnector, Full<Bytes>> = Client::builder(TokioExecutor::new()).build_http();
+    let client: Client<HttpConnector, Full<Bytes>> =
+        Client::builder(TokioExecutor::new()).build_http();
     let names = config.names.as_ref().map(|at| names::Names {
         etcd: etcd::Etcd::new(&at.etcd, client.clone()),
         admitters: at.admitters.clone(),
     });
+    let passkeys = match (&config.passkeys, &config.names) {
+        (Some(at), Some(names)) => Some(passkeys::Passkeys::new(
+            etcd::Etcd::new(&names.etcd, client.clone()),
+            at.clone(),
+        )),
+        (Some(_), None) => {
+            return Err(laye_peer::error(
+                "passkeys",
+                "laye keeps passkeys in the etcd it keeps names in, and names none",
+                "",
+            ));
+        }
+        _ => None,
+    };
+    let web = config.web.clone().or_else(|| {
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("share/laye/web")))
+    });
     let inner = Arc::new(Inner {
+        passkeys,
+        web,
         config,
         key,
         did: did.clone(),
@@ -165,6 +197,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
     });
     let run = tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETRY);
+        let mut ticks: u64 = 0;
         loop {
             tokio::select! {
                 accepted = listener.accept() => {
@@ -186,7 +219,16 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                         }
                     });
                 }
-                _ = tick.tick() => hand_over(&inner).await,
+                _ = tick.tick() => {
+                    hand_over(&inner).await;
+                    ticks += 1;
+                    if ticks.is_multiple_of(60) && let Some(keys) = &inner.passkeys {
+                        let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
+                        for why in held.deliver_due(now()).await {
+                            eprintln!("laye-front: what was collected and due was not delivered: {why}");
+                        }
+                    }
+                }
             }
         }
     });
@@ -198,6 +240,599 @@ fn now() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+fn laye_of(inner: &Inner) -> issuer::Laye<'_> {
+    issuer::Laye {
+        issuer: &inner.config.issuer,
+        did: &inner.did,
+        nodes: &inner.config.nodes,
+        roots: &inner.config.root_identities,
+        signers: &inner.config.binding_signers,
+        issued: &inner.issued,
+        invitations: &inner.invitations,
+        ceremony: &inner.config.ceremony_at,
+        now: now(),
+    }
+}
+
+fn host_of(parts: &hyper::http::request::Parts) -> &str {
+    parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default()
+}
+
+fn named_by(origin: &str, host: &str) -> bool {
+    origin
+        .split_once("://")
+        .is_some_and(|(_, name)| name.trim_end_matches('/') == host)
+}
+
+/// The person a request's session cookie is, at this laye.
+fn person_asking(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+) -> Result<(String, String), String> {
+    session_asking(inner, parts).map(|(person, level, _)| (person, level))
+}
+
+/// The person a request's session cookie is, their level, and until when.
+fn session_asking(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+) -> Result<(String, String, u64), String> {
+    let token = parts
+        .headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| {
+            c.trim()
+                .strip_prefix(passkeys::SESSION_COOKIE)
+                .and_then(|rest| rest.strip_prefix('='))
+        })
+        .ok_or("no person's session is presented")?;
+    passkeys::person_of(token, &inner.did, now())
+}
+
+fn session_cookie(token: Option<&str>) -> String {
+    match token {
+        Some(token) => format!(
+            "{}={token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
+            passkeys::SESSION_COOKIE,
+            passkeys::SESSION_LIFE
+        ),
+        None => format!(
+            "{}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0",
+            passkeys::SESSION_COOKIE
+        ),
+    }
+}
+
+/// laye's page for a person, and what it asks: their passkeys and their
+/// session, at laye's own name and at every origin its passkeys answer at.
+async fn as_person(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+    body: &[u8],
+) -> Option<Response<Body>> {
+    let keys = inner.passkeys.as_ref()?;
+    let host = host_of(parts);
+    let ours =
+        named_by(&inner.config.issuer, host) || keys.at.origins.iter().any(|o| named_by(o, host));
+    if !ours {
+        return None;
+    }
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let path = parts.uri.path();
+    if get && let Some(file) = path.strip_prefix("/laye/web/") {
+        return Some(web_file(inner, file));
+    }
+    let answered = match path {
+        "/.well-known/webauthn" if get && host == keys.at.rp_id => passkeys::Answer {
+            status: 200,
+            body: keys.related(),
+            session: None,
+        },
+        "/laye/me" if get => return Some(person_page(inner)),
+        "/laye/challenge" if get => {
+            let (status, _, text) = laye_of(inner).challenge();
+            return Some(json(
+                StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                text,
+            ));
+        }
+        "/laye/passkey/me" if get => match session_asking(inner, parts) {
+            Ok((person, level, until)) => {
+                let shown = shown_for(inner, keys, &person).await;
+                passkeys::Answer {
+                    status: 200,
+                    body: serde_json::json!({
+                        "person": person, "level": level, "until": until,
+                        "name": shown.name, "picture": shown.picture, "account": shown.account,
+                    }),
+                    session: None,
+                }
+            }
+            Err(why) => passkeys::Answer {
+                status: 401,
+                body: serde_json::json!({ "error": why }),
+                session: None,
+            },
+        },
+        "/laye/passkey/enrol/begin" if post => match serde_json::from_slice::<door::Login>(body) {
+            Ok(login) => match laye_of(inner).first_half(&login) {
+                Ok(first) => keys.enrol_begin(first, shown_in(body), now()),
+                Err((status, why)) => passkeys::Answer {
+                    status,
+                    body: serde_json::json!({ "error": why }),
+                    session: None,
+                },
+            },
+            Err(e) => passkeys::Answer {
+                status: 400,
+                body: serde_json::json!({ "error": format!("the login does not read: {e}") }),
+                session: None,
+            },
+        },
+        "/laye/passkey/enrol/finish" if post => {
+            keys.enrol_finish(body, &inner.did, &inner.key, now()).await
+        }
+        "/laye/passkey/signin/begin" if post => keys.sign_in_begin(body, now()).await,
+        "/laye/passkey/signin/finish" if post => {
+            let laye = laye_of(inner);
+            keys.sign_in_finish(
+                body,
+                |kept| laye.still_vouched(&kept.person, &kept.level, kept.binding.as_ref()),
+                &inner.did,
+                &inner.key,
+                now(),
+            )
+            .await
+        }
+        "/laye/device" if post => {
+            let asked = issuer::form(&String::from_utf8_lossy(body));
+            let field = |name: &str| asked.get(name).map_or("", |v| v.trim());
+            let (status, body) = devices_of(inner, keys)
+                .ask(field("did"), field("label"), now())
+                .await;
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/device/token" if post => {
+            let asked = issuer::form(&String::from_utf8_lossy(body));
+            let device_code = asked.get("device_code").map_or("", |v| v.trim());
+            let (status, body) = devices_of(inner, keys).token(device_code, now()).await;
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/device/shown" | "/laye/device/approve" => {
+            // A key never says yes for a person: only their passkey session does.
+            let (person, level) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let devices = devices_of(inner, keys);
+            let (status, body) = if path == "/laye/device/shown" && get {
+                let query = issuer::form(parts.uri.query().unwrap_or_default());
+                let user_code = query.get("user_code").map_or("", String::as_str);
+                devices.shown(user_code, now()).await
+            } else if path == "/laye/device/approve" && post {
+                #[derive(Deserialize)]
+                struct Asked {
+                    user_code: String,
+                }
+                match serde_json::from_slice::<Asked>(body) {
+                    Ok(asked) => {
+                        devices
+                            .approve(&asked.user_code, &person, &level, now())
+                            .await
+                    }
+                    Err(e) => (
+                        400,
+                        serde_json::json!({ "error": format!("a yes is {{\"user_code\"}}: {e}") }),
+                    ),
+                }
+            } else {
+                return None;
+            };
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/collected" | "/laye/collected/act" => {
+            // "and as a human i can dial it"
+            // What waits is the person's to see and to act on, in their
+            // passkey session: no key does either.
+            let (person, level) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let held = collected::Collections {
+                etcd: &keys.etcd,
+                laye: &inner.did,
+            };
+            let (status, body) = if path == "/laye/collected" && get {
+                collected_for(&held, &person, &level).await
+            } else if path == "/laye/collected/act" && post {
+                act_on(&held, &person, &level, body).await
+            } else {
+                return None;
+            };
+            return Some(json(code(status), body.to_string()));
+        }
+        "/laye/person" if post => {
+            // A person's name and photo, as the provider showed them: taken
+            // only with a binding that is theirs, signed by a key laye trusts.
+            let (person, _) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let (status, words) = shown_by(inner, keys, &person, body).await;
+            return Some(json(code(status), words.to_string()));
+        }
+        "/laye/passkey/out" if post => {
+            let mut resp = json(StatusCode::OK, "{}");
+            if let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(None)) {
+                resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
+            }
+            return Some(resp);
+        }
+        _ => return None,
+    };
+    let mut resp = json(
+        StatusCode::from_u16(answered.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        answered.body.to_string(),
+    );
+    if let Some(token) = answered.session
+        && let Ok(cookie) = hyper::header::HeaderValue::from_str(&session_cookie(Some(&token)))
+    {
+        resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
+    }
+    Some(resp)
+}
+
+/// Whether `person`, at `level`, sees and acts on what waits for `did`: the
+/// agent is theirs, or they are a root.
+async fn theirs(held: &collected::Collections<'_>, did: &str, person: &str, level: &str) -> bool {
+    level == issuer::ROOT
+        || held
+            .person_of_agent(did)
+            .await
+            .is_ok_and(|whose| whose == person)
+}
+
+/// What waits for the agents a person sees.
+async fn collected_for(
+    held: &collected::Collections<'_>,
+    person: &str,
+    level: &str,
+) -> (u16, serde_json::Value) {
+    let all = match held.all().await {
+        Ok(all) => all,
+        Err(why) => return (503, serde_json::json!({ "error": why })),
+    };
+    let mut seen = Vec::new();
+    for one in all {
+        if (!one.waiting.is_empty() || !one.held_until.is_empty())
+            && theirs(held, &one.did, person, level).await
+        {
+            seen.push(one);
+        }
+    }
+    (200, serde_json::json!({ "collected": seen }))
+}
+
+/// A person's act on what waits for one agent:
+/// {"did", "act": release|hold|later|cancel|edit, "ids", "says", "until", "id"}.
+async fn act_on(
+    held: &collected::Collections<'_>,
+    person: &str,
+    level: &str,
+    body: &[u8],
+) -> (u16, serde_json::Value) {
+    #[derive(Deserialize)]
+    struct Asked {
+        did: String,
+        act: String,
+        #[serde(default)]
+        ids: Vec<String>,
+        #[serde(default)]
+        says: Option<String>,
+        #[serde(default)]
+        until: Option<String>,
+        #[serde(default)]
+        id: Option<String>,
+    }
+    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let asked: Asked = match serde_json::from_slice(body) {
+        Ok(asked) => asked,
+        Err(e) => return refused(400, format!("an act is {{\"did\", \"act\"}}: {e}")),
+    };
+    if !theirs(held, &asked.did, person, level).await {
+        return refused(
+            403,
+            format!("what waits for {} is not {person}'s to act on", asked.did),
+        );
+    }
+    let says = asked.says.filter(|s| !s.trim().is_empty());
+    let act = match asked.act.as_str() {
+        "release" => collected::Act::Release {
+            ids: asked.ids,
+            says,
+        },
+        "later" => collected::Act::Later,
+        "cancel" => collected::Act::Cancel { id: asked.id },
+        "hold" => match asked.until.as_deref().map(collected::secs) {
+            Some(until) if until > 0 => collected::Act::Hold { until },
+            _ => return refused(400, "hold takes until, as RFC 3339".into()),
+        },
+        "edit" => match (asked.id, says) {
+            (Some(id), Some(says)) => collected::Act::Edit { id, says },
+            _ => return refused(400, "edit takes the id and what it says".into()),
+        },
+        other => {
+            return refused(
+                400,
+                format!("{other:?} is no act: release, hold, later, cancel, edit"),
+            );
+        }
+    };
+    match held.act(&asked.did, &act, person, now()).await {
+        Ok(after) => (200, serde_json::json!(after)),
+        Err(why) => refused(409, why),
+    }
+}
+
+// "why do you make the user click on, if your photo doesnt show here, thing."
+//
+/// What a person is shown as: what laye keeps, or else what laye can find
+/// itself, which it then keeps. The account is the one their passkey's
+/// binding proved. The name and photo are their record at the node, asked as
+/// a key they said yes to; kept, they show while the node is down too.
+/// Nothing here asks the person to do anything.
+async fn shown_for(inner: &Inner, keys: &passkeys::Passkeys, person: &str) -> passkeys::Shown {
+    let mut shown = passkeys::shown_of(&keys.etcd, person)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if !shown.name.is_empty() && !shown.picture.is_empty() && !shown.account.is_empty() {
+        return shown;
+    }
+    let before = shown.clone();
+    if shown.account.is_empty() {
+        shown.account = account_of(keys, person).await.unwrap_or_default();
+    }
+    if (shown.name.is_empty() || shown.picture.is_empty())
+        && let Some(record) = record_of(inner, keys, person).await
+    {
+        let field = |name: &str| {
+            record
+                .get(name)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if shown.picture.is_empty() {
+            shown.picture = field("picture");
+        }
+        if shown.name.is_empty() {
+            shown.name = field("display_name");
+        }
+    }
+    if shown.name.is_empty() {
+        shown.name = shown.account.clone();
+    }
+    if shown != before
+        && let Ok(value) = serde_json::to_vec(&shown)
+        && let Err(why) = keys
+            .etcd
+            .txn(
+                &[],
+                vec![etcd::Op::Put(
+                    format!("{}{person}", passkeys::PEOPLE),
+                    value,
+                )],
+            )
+            .await
+    {
+        eprintln!("laye-front: what {person} is shown as was not kept: {why}");
+    }
+    shown
+}
+
+/// The account a person's passkey was made on, as its provider names it.
+async fn account_of(keys: &passkeys::Passkeys, person: &str) -> Option<String> {
+    let all = keys.etcd.under(passkeys::PASSKEYS).await.ok()?;
+    all.iter().find_map(|(_, kv)| {
+        let kept: passkeys::Passkey = serde_json::from_slice(&kv.value).ok()?;
+        let binding = kept.binding.filter(|_| kept.person == person)?;
+        Some(binding.claim.handle.unwrap_or(binding.claim.canonical_id))
+    })
+}
+
+/// The person's record at the node (QNTX `/i/`), asked as a key they said
+/// yes to at laye. None when no such key is kept, or the node did not answer.
+async fn record_of(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    person: &str,
+) -> Option<serde_json::Value> {
+    let theirs = keys.etcd.under(devices::KEYS).await.ok()?;
+    let key = theirs.iter().find_map(|(at, kv)| {
+        let yes: devices::Yes = serde_json::from_slice(&kv.value).ok()?;
+        if yes.person != person {
+            return None;
+        }
+        at.strip_prefix(devices::KEYS).map(str::to_string)
+    })?;
+    let resp = forward(
+        inner,
+        hyper::Version::HTTP_11,
+        &hyper::Method::GET,
+        "/i/",
+        &[],
+        Some(&key),
+        Bytes::new(),
+    )
+    .await
+    .ok()?;
+    if resp.status() != StatusCode::OK {
+        return None;
+    }
+    let body = resp.into_body().collect().await.ok()?.to_bytes();
+    serde_json::from_slice(&body).ok()
+}
+
+/// What a person is shown as, when a page sends it beside what it asks.
+fn shown_in(body: &[u8]) -> Option<passkeys::Shown> {
+    let asked: serde_json::Value = serde_json::from_slice(body).ok()?;
+    serde_json::from_value(asked.get("shown")?.clone()).ok()
+}
+
+/// Keeps what `person` is shown as, from the provider's answer to a ceremony
+/// that proved the account `person` is.
+async fn shown_by(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    person: &str,
+    body: &[u8],
+) -> (u16, serde_json::Value) {
+    #[derive(Deserialize)]
+    struct Asked {
+        binding: laye_me::SignedBinding,
+        shown: passkeys::Shown,
+    }
+    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let asked: Asked = match serde_json::from_slice(body) {
+        Ok(asked) => asked,
+        Err(e) => return refused(400, format!("this is {{\"binding\", \"shown\"}}: {e}")),
+    };
+    if asked.binding.claim.canonical_id != person {
+        return refused(403, format!("the account proven is not {person}"));
+    }
+    if asked.binding.verify().is_err()
+        || !inner
+            .config
+            .binding_signers
+            .contains(&door::hex(&asked.binding.signer_pubkey))
+    {
+        return refused(403, "the binding is not signed by a key laye trusts".into());
+    }
+    let value = match serde_json::to_vec(&asked.shown) {
+        Ok(value) => value,
+        Err(e) => return refused(500, e.to_string()),
+    };
+    match keys
+        .etcd
+        .txn(
+            &[],
+            vec![etcd::Op::Put(
+                format!("{}{person}", passkeys::PEOPLE),
+                value,
+            )],
+        )
+        .await
+    {
+        Ok(_) => (200, serde_json::json!(asked.shown)),
+        Err(why) => refused(503, why),
+    }
+}
+
+fn code(status: u16) -> StatusCode {
+    StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// The device flow, at the etcd passkeys are kept in; the person says yes at
+/// laye's page on the first origin its passkeys answer at.
+fn devices_of<'a>(inner: &'a Inner, keys: &'a passkeys::Passkeys) -> devices::Devices<'a> {
+    devices::Devices {
+        etcd: &keys.etcd,
+        approve_at: keys.at.origins.first().map_or("", String::as_str),
+        laye: &inner.did,
+    }
+}
+
+/// laye's page for a person: their passkey, and who laye knows them as.
+fn person_page(inner: &Inner) -> Response<Body> {
+    let page = include_str!("me.html")
+        .replace(
+            "{{ceremony}}",
+            &serde_json::to_string(&inner.config.ceremony_at).unwrap_or_default(),
+        )
+        .replace(
+            "{{signers}}",
+            &serde_json::to_string(&inner.config.binding_signers).unwrap_or_default(),
+        )
+        // Each provider's mark, as QNTX-Web's door draws it (ts/provider-marks.ts).
+        .replace("{{marks}}", include_str!("marks.json"));
+    let mut resp = said(StatusCode::OK, page);
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/html; charset=utf-8"),
+    );
+    resp
+}
+
+/// What vitreous ships (its package.json files): the glass laye's pages wear.
+const VITREOUS: [&str; 6] = [
+    "vitreous/vitreous.css",
+    "vitreous/glass.css",
+    "vitreous/shadow.css",
+    "vitreous/motion.css",
+    "vitreous/hover.css",
+    "vitreous/click.css",
+];
+
+/// laye's wasm, the JS that loads it, and vitreous's stylesheets, from laye-web.
+fn web_file(inner: &Inner, file: &str) -> Response<Body> {
+    let kind = match file {
+        "laye_p2p.js" => "text/javascript",
+        "laye_p2p_bg.wasm" => "application/wasm",
+        _ if VITREOUS.contains(&file) => "text/css",
+        _ => {
+            return said(
+                StatusCode::NOT_FOUND,
+                "laye serves its wasm, its JS and vitreous's stylesheets, and nothing else here",
+            );
+        }
+    };
+    let Some(dir) = &inner.web else {
+        return said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "laye does not know where its wasm is",
+        );
+    };
+    match std::fs::read(dir.join(file)) {
+        Ok(bytes) => {
+            let mut resp = Response::new(whole(bytes));
+            resp.headers_mut().insert(
+                hyper::header::CONTENT_TYPE,
+                hyper::header::HeaderValue::from_static(kind),
+            );
+            resp
+        }
+        Err(e) => said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("laye's wasm is not at {}: {e}", dir.display()),
+        ),
+    }
 }
 
 /// What laye answers itself, at its own name: where people log in. Anything
@@ -220,17 +855,7 @@ fn as_laye(
     if !ours {
         return None;
     }
-    let laye = issuer::Laye {
-        issuer: &inner.config.issuer,
-        did: &inner.did,
-        nodes: &inner.config.nodes,
-        roots: &inner.config.root_identities,
-        signers: &inner.config.binding_signers,
-        issued: &inner.issued,
-        invitations: &inner.invitations,
-        ceremony: &inner.config.ceremony_at,
-        now: now(),
-    };
+    let laye = laye_of(inner);
     let get = parts.method == hyper::Method::GET;
     let post = parts.method == hyper::Method::POST;
     let (status, kind, text) = match parts.uri.path() {
@@ -243,8 +868,11 @@ fn as_laye(
         "/auth/introspect" if post => laye.introspect(body),
         "/laye/roots" if post => laye.roots(body),
         "/laye/invitations" | "/laye/invitations/withdraw" => {
+            // "and i own the invites"
+            // A root's own key, or a root in its passkey session at laye's page.
             let signer = match signer_of(inner, parts) {
-                Ok(signer) => signer,
+                Ok(Some(signer)) => Some(signer),
+                Ok(None) => person_asking(inner, parts).ok().map(|(person, _)| person),
                 Err(why) => return Some(said(StatusCode::UNAUTHORIZED, why)),
             };
             match (parts.uri.path(), get, post) {
@@ -304,6 +932,10 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         }
     };
 
+    if let Some(answered) = as_person(inner, &parts, &body).await {
+        return answered;
+    }
+
     if let Some(answered) = as_laye(inner, &parts, &body) {
         return answered;
     }
@@ -355,6 +987,14 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
     // logged in at QNTX reached it as a stranger, and their app asked them
     // to log in, again and again.
     let headers = passed_on(&parts);
+
+    // What an agent says to an agent, its Task, and the row it is delivered
+    // on are laye's when it keeps passkeys: QNTX up or not.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && let Some(answered) = as_collections(inner, keys, &parts, &body, subject, &headers).await
+    {
+        return answered;
+    }
 
     if let Some(upgrading) = upgrading {
         return carry_upgrade(
@@ -440,7 +1080,10 @@ async fn at_names(
                     .name(&signer, &asked.name, asked.given.as_deref(), now())
                     .await
             }
-            Err(e) => (400, format!("a name is asked for as {{\"name\": ...}}: {e}")),
+            Err(e) => (
+                400,
+                format!("a name is asked for as {{\"name\": ...}}: {e}"),
+            ),
         }
     };
     // An admission laye already holds (409) is told too: it may have been made
@@ -462,6 +1105,232 @@ async fn at_names(
     } else {
         said(status, words)
     }
+}
+
+/// A2A 1.0 over HTTP+JSON, beneath a tenant: `/a2a/<Name>/<rest>`.
+fn at_a_name(path: &str) -> Option<(&str, &str)> {
+    let rest = path.strip_prefix("/a2a/")?;
+    let (name, rest) = rest.split_once('/')?;
+    (!name.is_empty() && !name.contains('.')).then_some((name, rest))
+}
+
+/// The agent holding a name at laye: its DID and the name as it holds it.
+async fn named(etcd: &etcd::Etcd, name: &str) -> Result<Option<(String, String)>, String> {
+    let name = name.replace("%20", " ");
+    let Some(kv) = etcd
+        .get(&format!("/names/{}", name.to_ascii_lowercase()))
+        .await?
+    else {
+        return Ok(None);
+    };
+    let held: serde_json::Value = serde_json::from_slice(&kv.value)
+        .map_err(|e| format!("the name {name} does not read: {e}"))?;
+    Ok(held.get("did").and_then(|d| d.as_str()).map(|did| {
+        let called = held
+            .get("name")
+            .and_then(|n| n.as_str())
+            .unwrap_or(&name)
+            .to_string();
+        (did.to_string(), called)
+    }))
+}
+
+/// A Task laye answers with, in A2A 1.0's ProtoJSON.
+fn task_json(t: &collected::Tasked) -> serde_json::Value {
+    serde_json::json!({
+        "id": t.id,
+        "contextId": t.context,
+        "status": {
+            "state": t.state,
+            "message": {
+                "messageId": format!("{}-said", t.id),
+                "contextId": t.context,
+                "taskId": t.id,
+                "role": "ROLE_AGENT",
+                "parts": [{ "text": t.says }],
+            },
+        },
+    })
+}
+
+/// What an agent says to a name, the Task it is, the row of the person asking,
+/// and a delivery's whole: laye's, from what it keeps. None is not laye's to
+/// answer, and goes on to QNTX.
+async fn as_collections(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    parts: &hyper::http::request::Parts,
+    body: &Bytes,
+    subject: &str,
+    headers: &[(String, String)],
+) -> Option<Response<Body>> {
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let path = parts.uri.path();
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let failed = |why: String| Some(said(StatusCode::SERVICE_UNAVAILABLE, why));
+
+    if let Some((name, rest)) = at_a_name(path) {
+        if post && rest == "message:send" {
+            let (did, called) = match named(&keys.etcd, name).await {
+                Ok(Some(held)) => held,
+                Ok(None) => return None,
+                Err(why) => return failed(why),
+            };
+            let Ok(send) = serde_json::from_slice::<a2a::SendMessageRequest>(body) else {
+                return None;
+            };
+            let says: Vec<&str> = send
+                .message
+                .parts
+                .iter()
+                .filter_map(|p| p.as_text())
+                .collect();
+            if says.is_empty() {
+                return Some(said(
+                    StatusCode::BAD_REQUEST,
+                    "what is said to a name crosses the row as text, and this said none",
+                ));
+            }
+            let from = match keys.etcd.get(&format!("/named/{subject}")).await {
+                Ok(Some(kv)) => {
+                    let at = String::from_utf8_lossy(&kv.value).into_owned();
+                    let name = at.strip_prefix("/names/").unwrap_or(&at).to_string();
+                    named(&keys.etcd, &name)
+                        .await
+                        .ok()
+                        .flatten()
+                        .map_or(name, |(_, n)| n)
+                }
+                Ok(None) => subject.to_string(),
+                Err(why) => return failed(why),
+            };
+            let context = send
+                .message
+                .context_id
+                .clone()
+                .unwrap_or_else(a2a::new_context_id);
+            return match held
+                .collect(
+                    &did,
+                    &called,
+                    subject,
+                    &from,
+                    &says.join("\n"),
+                    &context,
+                    now(),
+                )
+                .await
+            {
+                Ok(task) => Some(json(
+                    StatusCode::OK,
+                    serde_json::json!({ "task": task_json(&task) }).to_string(),
+                )),
+                Err(why) => failed(why),
+            };
+        }
+        if get && let Some(id) = rest.strip_prefix("tasks/") {
+            return match held.task(id).await {
+                Ok(Some(task)) => Some(json(StatusCode::OK, task_json(&task).to_string())),
+                Ok(None) => None,
+                Err(why) => failed(why),
+            };
+        }
+        return None;
+    }
+
+    if get && let Some(id) = path.strip_prefix("/am/statusline/") {
+        let person = held.person_of_key(subject).await.ok().flatten();
+        return match held.detail(id, subject, person.as_deref()).await {
+            Ok(Some(detail)) => Some(json(StatusCode::OK, detail.to_string())),
+            Ok(None) => None,
+            Err(why) => failed(why),
+        };
+    }
+
+    if get && path == "/am/statusline" {
+        let person = match held.person_of_key(subject).await {
+            Ok(Some(person)) => person,
+            Ok(None) => return None,
+            Err(why) => return failed(why),
+        };
+        let items = match held.row(&person, now()).await {
+            Ok(items) => items,
+            Err(why) => return failed(why),
+        };
+        let query = issuer::form(parts.uri.query().unwrap_or_default());
+        let format = query.get("format").map_or("", String::as_str).to_string();
+        let full = parts
+            .uri
+            .path_and_query()
+            .map_or(path, |p| p.as_str())
+            .to_string();
+        let qntx = match forward(
+            inner,
+            parts.version,
+            &parts.method,
+            &full,
+            headers,
+            Some(subject),
+            Bytes::new(),
+        )
+        .await
+        {
+            Ok(resp) if resp.status() == StatusCode::OK => {
+                resp.into_body().collect().await.ok().map(|b| b.to_bytes())
+            }
+            _ => None,
+        };
+        return Some(row_with(&format, qntx, &items));
+    }
+    None
+}
+
+/// QNTX's row with laye's items on it, or laye's alone when QNTX did not
+/// answer: as JSON, or drawn as the row is (QNTX statusline renderLine).
+fn row_with(format: &str, qntx: Option<Bytes>, items: &[serde_json::Value]) -> Response<Body> {
+    if format == "json" {
+        let mut row = qntx
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .unwrap_or_else(|| serde_json::json!({ "items": [], "deploys": [] }));
+        if let Some(all) = row.get_mut("items").and_then(|i| i.as_array_mut()) {
+            all.extend(items.iter().cloned());
+        }
+        return json(StatusCode::OK, row.to_string());
+    }
+    let mut line = qntx
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    for item in items {
+        let text = |f: &str| {
+            item.get(f)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string()
+        };
+        if !line.is_empty() {
+            line.push_str("  ");
+        }
+        let drawn = format!(
+            "{} {}",
+            text("name"),
+            text("note").replace(['\n', '#'], " ")
+        );
+        if format == "tmux" {
+            line.push_str(&format!("#[range=user|{}]{drawn}#[norange]", text("id")));
+        } else {
+            line.push_str(&drawn);
+        }
+    }
+    let mut resp = said(StatusCode::OK, line);
+    resp.headers_mut().insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/plain; charset=utf-8"),
+    );
+    resp
 }
 
 /// The request's headers as QNTX is handed them: a session's own signature

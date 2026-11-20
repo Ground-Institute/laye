@@ -63,7 +63,12 @@ pub type Answer = (u16, String);
 impl Names {
     /// `signer` admits `did`, called `label`. 200 admitted now; 409 already.
     pub async fn admit(&self, signer: &str, did: &str, label: &str, now: u64) -> Answer {
-        if !self.admitters.iter().any(|a| a == signer) {
+        // A key laye's settings name, or a key a person said yes to at laye.
+        let said_yes_to = match crate::devices::whose(&self.etcd, signer).await {
+            Ok(yes) => yes.is_some(),
+            Err(e) => return (503, e),
+        };
+        if !said_yes_to && !self.admitters.iter().any(|a| a == signer) {
             return (
                 403,
                 format!("{signer} is not a key laye takes to admit a session's key"),

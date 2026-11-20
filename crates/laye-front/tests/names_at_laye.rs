@@ -189,6 +189,8 @@ fn config(qntx: SocketAddr, dir: &std::path::Path, etcd: &str, admitters: Vec<St
             etcd: etcd.into(),
             admitters,
         }),
+        passkeys: None,
+        web: None,
     }
 }
 
