@@ -398,19 +398,17 @@ function invitesNodes(got) {
     const who = inv.accounts.map((a) => a.account).join(' or ');
     const row = el('div', undefined, 'door-row door-invited');
     row.append(el('p', kick ? `${who} · in` : `${who} · invited`, 'door-said'));
-    const withdraw = act(kick ? 'kick' : 'cancel', () => {
-      // Kicked and cancelled are not taken back: each is asked twice.
-      const sure = el('div', undefined, 'door-row');
-      const keep = button('keep', 'door-press', () => sure.replaceWith(row));
-      sure.append(button(kick ? 'yes, kick' : 'yes, cancel', 'door-press', () => pressed(async () => {
-        await asked('/laye/invitations/withdraw', { id: inv.id });
-        return kick ? `${who} is out` : 'cancelled';
-      })), keep);
-      row.replaceWith(sure);
-      keep.focus();
-    });
-    row.append(withdraw);
-    nodes.push(row);
+    // Kicked and cancelled are not taken back: each is asked twice.
+    const sure = el('div', undefined, 'door-row');
+    const keep = button('keep', 'door-press', () => sure.replaceWith(row));
+    sure.append(button(kick ? 'yes, kick' : 'yes, cancel', 'door-press', () => pressed(async () => {
+      await asked('/laye/invitations/withdraw', { id: inv.id });
+      return kick ? `${who} is out` : 'cancelled';
+    })), keep);
+    row.append(act(kick ? 'kick' : 'cancel', () => { row.replaceWith(sure); keep.focus(); }));
+    // "the MAIL ROOT received has a button for cancelling the invitation"
+    // The cancel in the root's mail opens here, on that invitation, asked once more.
+    nodes.push(!kick && inv.id === cancelling ? sure : row);
   }
   // Which provider: its mark, picked. Their account there: one field.
   let picked = null;
@@ -435,15 +433,26 @@ function invitesNodes(got) {
   const invite = button('invite', 'door-press', () => {
     const who = account.value.trim();
     if (!picked || !who) { say(picked ? 'their account?' : 'pick how they sign in'); return; }
+    const to = email.value.trim();
     pressed(async () => {
-      await asked('/laye/invitations', { accounts: [{ provider: picked, account: who }] });
-      return `invited ${who}`;
+      const made = await asked('/laye/invitations', { accounts: [{ provider: picked, account: who }], ...(to ? { email: to } : {}) });
+      if (made.mail_error) return `invited ${who}; the mail to ${to} did not go: ${made.mail_error}`;
+      return made.mailed ? `invited ${who}, mailed ${made.mailed}` : `invited ${who}`;
     });
   });
   account.addEventListener('keydown', (e) => { if (e.key === 'Enter') invite.click(); });
-  nodes.push(ways, account, invite);
+  // "As ROOT i send an invite link to a friend, i enter their e-mail address"
+  const email = el('input', undefined, 'door-input');
+  email.type = 'email';
+  email.placeholder = 'their e-mail, to mail them the invite';
+  email.autocomplete = 'off';
+  email.addEventListener('keydown', (e) => { if (e.key === 'Enter') invite.click(); });
+  nodes.push(ways, account, email, invite);
   return nodes;
 }
+
+// The invitation the root's mail asks to cancel.
+const cancelling = new URLSearchParams(location.search).get('cancel');
 
 /** A quiet press beside what it acts on. */
 function act(label, onPress) {

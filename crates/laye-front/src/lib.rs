@@ -20,6 +20,7 @@ pub mod etcd;
 pub mod invitations;
 mod issuer;
 pub mod jwt;
+mod mail;
 pub mod names;
 pub mod passkeys;
 
@@ -936,7 +937,11 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         return answered;
     }
 
+    let inviting = parts.method == hyper::Method::POST && parts.uri.path() == "/laye/invitations";
     if let Some(answered) = as_laye(inner, &parts, &body) {
+        if inviting && answered.status() == StatusCode::OK {
+            return mailed(inner, answered).await;
+        }
         return answered;
     }
 
@@ -1521,6 +1526,32 @@ fn who_signed(inner: &Inner, token: &str) -> Result<String, String> {
         ));
     }
     Ok(claims.iss)
+}
+
+/// "A mail actually goes out to both me and my friend"
+/// An invitation laye just made, mailed by QNTX when it names an address.
+/// The invitation stands either way; the answer says whether it was mailed.
+async fn mailed(inner: &Inner, answered: Response<Body>) -> Response<Body> {
+    let made = match answered.into_body().collect().await {
+        Ok(b) => b.to_bytes(),
+        Err(e) => return said(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    let Ok(inv) = serde_json::from_slice::<invitations::Invitation>(&made) else {
+        return json(StatusCode::OK, made);
+    };
+    let mut told = serde_json::json!(inv);
+    if let Some(asked) = mail::invited(&inv, &inner.config.issuer)
+        && let Some(fields) = told.as_object_mut()
+    {
+        match mail::send(inner, asked).await {
+            Ok(()) => fields.insert("mailed".into(), serde_json::json!(inv.email)),
+            Err(why) => {
+                eprintln!("laye-front: invitation {} was not mailed: {why}", inv.id);
+                fields.insert("mail_error".into(), serde_json::json!(why))
+            }
+        };
+    }
+    json(StatusCode::OK, told.to_string())
 }
 
 /// laye's own signature, naming the session, for QNTX alone and one request.

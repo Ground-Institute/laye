@@ -586,15 +586,20 @@ impl Laye<'_> {
         #[derive(Deserialize)]
         struct Asked {
             accounts: Vec<Account>,
+            #[serde(default)]
+            email: Option<String>,
         }
         let Ok(asked) = serde_json::from_slice::<Asked>(body) else {
             return refused(
                 400,
                 "invalid_request",
-                "an invitation is {\"accounts\": [{\"provider\", \"account\"}]}",
+                "an invitation is {\"accounts\": [{\"provider\", \"account\"}], \"email\"}",
             );
         };
-        match self.invitations.invite(&root, asked.accounts, self.now) {
+        match self
+            .invitations
+            .invite(&root, asked.accounts, asked.email, self.now)
+        {
             Ok(inv) => json(200, serde_json::json!(inv)),
             Err(why) => refused(400, "invalid_request", why),
         }

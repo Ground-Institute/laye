@@ -35,6 +35,10 @@ pub struct Invitation {
     /// Kicked: the one it let in is out.
     #[serde(default)]
     pub kicked_at: Option<u64>,
+    /// "As ROOT i send an invite link to a friend, i enter their e-mail address"
+    /// Where the invitation was mailed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 impl Invitation {
@@ -132,6 +136,7 @@ impl Invitations {
         &self,
         by: &str,
         accounts: Vec<Account>,
+        email: Option<String>,
         now: u64,
     ) -> Result<Invitation, String> {
         if accounts.is_empty()
@@ -140,6 +145,15 @@ impl Invitations {
                 .any(|a| a.provider.is_empty() || a.account.is_empty())
         {
             return Err("an invitation names at least one provider and the account there".into());
+        }
+        let email = email
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty());
+        if email
+            .as_deref()
+            .is_some_and(|e| !e.contains('@') || e.chars().any(char::is_whitespace))
+        {
+            return Err("email is the invited person's e-mail address".into());
         }
         let inv = Invitation {
             id: (0..16)
@@ -151,6 +165,7 @@ impl Invitations {
             cancelled_at: None,
             accepted_by: None,
             kicked_at: None,
+            email,
         };
         let kept = inv.clone();
         self.change(|all| {
