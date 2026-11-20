@@ -1,0 +1,10 @@
+{
+  "name": "c",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {
+    "bindings": [{ "name": "PEER", "class_name": "Peer" }]
+  },
+  // SQLite-backed, the kind of Durable Object the free plan has.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Peer"] }]
+}
