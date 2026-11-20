@@ -11,6 +11,12 @@
           "uses": "actions/checkout@v5"
         },
         {
+          "uses": "dtolnay/rust-toolchain@stable",
+          "with": {
+            "targets": "wasm32-unknown-unknown"
+          }
+        },
+        {
           "name": "Deploy c/ to C",
           "uses": "cloudflare/wrangler-action@v3",
           "with": {

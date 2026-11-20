@@ -10,8 +10,12 @@
 )]
 //! Engine-agnostic libp2p gossipsub transport for laye. wasm32 + native, same API.
 
+#[cfg(target_arch = "wasm32")]
+mod accept;
 mod swarm;
 
+#[cfg(target_arch = "wasm32")]
+pub use accept::{Accepted, Accepting};
 use futures::channel::mpsc;
 pub use laye_me::Keypair;
 pub use laye_protocol::{PeerId, Topic};
@@ -99,6 +103,47 @@ pub fn new(config: NetConfig) -> Result<(Net, NetDrive), NetError> {
 
     let listening = !config.listen_addrs.is_empty();
     let swarm = swarm::build_swarm(config.keypair, config.identify_protocol, listening)?;
+    Ok(driven(
+        swarm,
+        self_peer_id,
+        self_keypair,
+        config.bootstrap_addrs,
+        config.listen_addrs,
+        config.topics,
+    ))
+}
+
+/// A peer in wasm32 that takes connections: its host hands each WebSocket it
+/// accepted to the [`Accepting`], and others reach it at `listen_addr`.
+#[cfg(target_arch = "wasm32")]
+pub fn new_accepting(
+    keypair: Keypair,
+    identify_protocol: String,
+    listen_addr: String,
+    topics: Vec<Topic>,
+) -> Result<(Net, NetDrive, Accepting), NetError> {
+    let self_peer_id = PeerId(libp2p::PeerId::from(keypair.public()).to_string());
+    let (accepting, taken) = accept::accepting();
+    let swarm = swarm::build_accepting_swarm(keypair.clone(), identify_protocol, taken)?;
+    let (net, drive) = driven(
+        swarm,
+        self_peer_id,
+        keypair,
+        Vec::new(),
+        vec![listen_addr],
+        topics,
+    );
+    Ok((net, drive, accepting))
+}
+
+fn driven(
+    swarm: libp2p::Swarm<swarm::LayeBehaviour>,
+    self_peer_id: PeerId,
+    self_keypair: Keypair,
+    bootstrap_addrs: Vec<String>,
+    listen_addrs: Vec<String>,
+    topics: Vec<Topic>,
+) -> (Net, NetDrive) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded::<swarm::Cmd>();
     let events: Arc<Mutex<Vec<NetEvent>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -106,12 +151,12 @@ pub fn new(config: NetConfig) -> Result<(Net, NetDrive), NetError> {
         swarm,
         cmd_rx,
         events.clone(),
-        config.bootstrap_addrs,
-        config.listen_addrs,
-        config.topics,
+        bootstrap_addrs,
+        listen_addrs,
+        topics,
     ));
 
-    Ok((
+    (
         Net {
             self_peer_id,
             self_keypair,
@@ -119,7 +164,7 @@ pub fn new(config: NetConfig) -> Result<(Net, NetDrive), NetError> {
             events,
         },
         drive,
-    ))
+    )
 }
 
 impl Net {

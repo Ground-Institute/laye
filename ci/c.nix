@@ -15,6 +15,11 @@
     runs-on = "ubuntu-latest";
     steps = [
       { uses = "actions/checkout@v5"; }
+      # C is Rust built for wasm32: wrangler's build runs worker-build (c/wrangler.jsonc).
+      {
+        uses = "dtolnay/rust-toolchain@stable";
+        "with".targets = "wasm32-unknown-unknown";
+      }
       {
         name = "Deploy c/ to C";
         uses = "cloudflare/wrangler-action@v3";

@@ -4052,10 +4052,13 @@ dependencies = [
  "laye-protocol",
  "libp2p",
  "libp2p-connection-limits",
+ "send_wrapper",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
+ "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

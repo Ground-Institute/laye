@@ -39,6 +39,48 @@ pub(crate) fn build_swarm(
     identify_protocol: String,
     listening: bool,
 ) -> Result<Swarm<LayeBehaviour>, NetError> {
+    let behaviour = build_behaviour(&keypair, identify_protocol, listening)?;
+    build_swarm_with_transport(keypair, behaviour)
+}
+
+/// A peer in wasm32 that takes the connections its host hands in.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn build_accepting_swarm(
+    keypair: libp2p::identity::Keypair,
+    identify_protocol: String,
+    taken: crate::accept::Taken,
+) -> Result<Swarm<LayeBehaviour>, NetError> {
+    let behaviour = build_behaviour(&keypair, identify_protocol, true)?;
+    let noise = libp2p::noise::Config::new(&keypair).map_err(|e| NetError::ProviderInternal {
+        reason: format!("noise config from keypair: {e}"),
+    })?;
+    let swarm = SwarmBuilder::with_existing_identity(keypair)
+        .with_wasm_bindgen()
+        .with_other_transport(move |_key| {
+            taken
+                .upgrade(upgrade::Version::V1)
+                .authenticate(noise)
+                .multiplex(libp2p::yamux::Config::default())
+                .map(|(p, m), _| (p, libp2p::core::muxing::StreamMuxerBox::new(m)))
+                .boxed()
+        })
+        .map_err(|e| NetError::ProviderInternal {
+            reason: format!("swarm transport: {e}"),
+        })?
+        .with_behaviour(|_key| behaviour)
+        .map_err(|e| NetError::ProviderInternal {
+            reason: format!("swarm behaviour: {e}"),
+        })?
+        .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+        .build();
+    Ok(swarm)
+}
+
+fn build_behaviour(
+    keypair: &libp2p::identity::Keypair,
+    identify_protocol: String,
+    listening: bool,
+) -> Result<LayeBehaviour, NetError> {
     let gossipsub_config = gossipsub::ConfigBuilder::default()
         .heartbeat_interval(Duration::from_secs(1))
         .validation_mode(gossipsub::ValidationMode::Strict)
@@ -79,14 +121,12 @@ pub(crate) fn build_swarm(
     };
     let connection_limits_b = connection_limits::Behaviour::new(conn_limits);
 
-    let behaviour = LayeBehaviour {
+    Ok(LayeBehaviour {
         gossipsub: gossipsub_b,
         identify: identify_b,
         ping: ping_b,
         connection_limits: connection_limits_b,
-    };
-
-    build_swarm_with_transport(keypair, behaviour)
+    })
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -131,12 +171,15 @@ fn build_swarm_with_transport(
     let swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(move |_key| {
-            libp2p::websocket::Config::new(libp2p::tcp::tokio::Transport::new(
-                libp2p::tcp::Config::default(),
-            ))
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise)
-            .multiplex(libp2p::yamux::Config::default())
+            // A peer named by its host, as C is, is dialed through DNS.
+            let tcp = libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default());
+            let named = libp2p::dns::tokio::Transport::system(tcp)?;
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
+                libp2p::websocket::Config::new(named)
+                    .upgrade(upgrade::Version::V1)
+                    .authenticate(noise)
+                    .multiplex(libp2p::yamux::Config::default()),
+            )
         })
         .map_err(|e| NetError::ProviderInternal {
             reason: format!("swarm transport: {e}"),
