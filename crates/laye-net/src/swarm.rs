@@ -130,11 +130,17 @@ fn build_swarm_with_transport(
     })?;
     // A peer of the cluster is dialed by the name its node has
     // (/dns4/k/tcp/4001/ws), so names are resolved beneath the socket.
-    let tcp = libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default());
-    let named =
-        libp2p::dns::tokio::Transport::system(tcp).map_err(|e| NetError::ProviderInternal {
-            reason: format!("the system's resolver: {e}"),
-        })?;
+    // A host that names no resolver (no /etc/resolv.conf, as in nix's build
+    // sandbox) resolves with hickory's own, and its hosts file, rather than
+    // not starting at all.
+    let tcp = || libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default());
+    let named = libp2p::dns::tokio::Transport::system(tcp()).unwrap_or_else(|_| {
+        libp2p::dns::tokio::Transport::custom(
+            tcp(),
+            libp2p::dns::ResolverConfig::default(),
+            libp2p::dns::ResolverOpts::default(),
+        )
+    });
     let swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(move |_key| {
