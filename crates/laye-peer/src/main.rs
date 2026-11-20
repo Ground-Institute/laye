@@ -1,6 +1,7 @@
-//! laye-peer --key <path> --listen <multiaddr>... --topic <topic>...
+//! laye-peer --key <path> --listen <multiaddr>... --dial <multiaddr>... --topic <topic>...
 //!
-//! Starts a laye peer others connect to. Says who it is and every address it
+//! Starts a laye peer others connect to, connected to the peers it dials,
+//! each named with its /p2p/ id and dialed again while it is away. Says who it is and every address it
 //! listens on, then every laye event, one JSON line each on stdout. A failure
 //! is one sacred-error JSON line on stderr.
 
@@ -12,12 +13,14 @@ use laye_net::{NetEvent, Topic};
 struct Args {
     key: PathBuf,
     listen: Vec<String>,
+    dial: Vec<String>,
     topics: Vec<Topic>,
 }
 
 fn args() -> Result<Args, Box<sacred_error::Error>> {
     let mut key = None;
     let mut listen = Vec::new();
+    let mut dial = Vec::new();
     let mut topics = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -31,12 +34,13 @@ fn args() -> Result<Args, Box<sacred_error::Error>> {
         match flag.as_str() {
             "--key" => key = Some(PathBuf::from(value)),
             "--listen" => listen.push(value),
+            "--dial" => dial.push(value),
             "--topic" => topics.push(Topic(value)),
             _ => {
                 return Err(laye_peer::error(
                     "args",
                     "laye-peer does not know this flag",
-                    format!("{flag}; it takes --key, --listen and --topic"),
+                    format!("{flag}; it takes --key, --listen, --dial and --topic"),
                 ));
             }
         }
@@ -58,6 +62,7 @@ fn args() -> Result<Args, Box<sacred_error::Error>> {
     Ok(Args {
         key,
         listen,
+        dial,
         topics,
     })
 }
@@ -78,8 +83,8 @@ async fn main() {
     let args = args().unwrap_or_else(|e| fail(&e));
     let keypair = laye_peer::key_at(&args.key).unwrap_or_else(|e| fail(&e));
     let did = laye_peer::did_of(&keypair).unwrap_or_default();
-    let (net, drive) =
-        laye_peer::listening(keypair, args.listen, args.topics).unwrap_or_else(|e| {
+    let (net, drive) = laye_peer::listening(keypair, args.listen, args.dial, args.topics)
+        .unwrap_or_else(|e| {
             fail(&laye_peer::error(
                 "start",
                 "the peer did not start",

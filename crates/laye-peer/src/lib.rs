@@ -20,15 +20,16 @@ use sacred_error::{Context, Error, Severity};
 /// What a laye peer says it speaks when another identifies it.
 pub const IDENTIFY: &str = "/laye/1.0.0";
 
-/// A peer that listens at `listen_addrs` and carries `topics` between the
-/// peers that connect to it.
+/// A peer that listens at `listen_addrs`, stays connected to the peers at
+/// `dial`, and carries `topics` between the peers it is connected to.
 pub fn listening(
     keypair: Keypair,
     listen_addrs: Vec<String>,
+    dial: Vec<String>,
     topics: Vec<Topic>,
 ) -> Result<(Net, NetDrive), NetError> {
     laye_net::new(NetConfig {
-        bootstrap_addrs: Vec::new(),
+        bootstrap_addrs: dial,
         listen_addrs,
         keypair,
         topics,
