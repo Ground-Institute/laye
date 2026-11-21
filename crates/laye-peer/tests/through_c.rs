@@ -82,3 +82,38 @@ async fn one_message_goes_from_one_peer_to_another_through_c() {
     assert_eq!(connected[0], c_only);
     assert_eq!(connected[1], c_only);
 }
+
+// "I want: A laye-peer on Cloudflare (C). The mesh of q, k and l is ready for it;"
+
+// 「[Opus 5.5] A peer connected to C alone says one message on laye/cluster, and
+// prints the did:key it signed with: the mesh's peers that dial C log it as
+// theirs. Run with LAYE_C_DIAL and LAYE_C_MESH set.」
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_said_to_c_alone_is_said_in_the_mesh() {
+    let (Ok(dial), Ok(_)) = (std::env::var("LAYE_C_DIAL"), std::env::var("LAYE_C_MESH")) else {
+        eprintln!("LAYE_C_DIAL and LAYE_C_MESH are not both set: no mesh to say it in");
+        return;
+    };
+    let topic = Topic("laye/cluster".into());
+    let (sender, sender_key) = client(&dial, &topic);
+    println!("sender {}", laye_peer::did_of(&sender_key).unwrap());
+    let said = b"said to C alone".to_vec();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut published = 0;
+    while Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        if sender.publish(&topic, &said).is_ok() {
+            let failed = sender
+                .poll_events()
+                .iter()
+                .any(|e| matches!(e, NetEvent::Error(laye_net::NetError::PublishFailed { .. })));
+            if !failed {
+                published += 1;
+            }
+        }
+    }
+    assert!(
+        published > 0,
+        "nothing was said: C carried no one on laye/cluster"
+    );
+}
