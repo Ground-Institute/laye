@@ -103,6 +103,41 @@ pub struct NamesAt {
     pub etcd: String,
     /// The did:keys whose signature admits a session's key.
     pub admitters: Vec<String>,
+    // "names and collections and just smaller things, messages say's status"
+    /// The etcd user laye asks as, whose role reaches only what laye keeps.
+    /// None asks as nobody, as etcd without authentication is asked.
+    #[serde(default)]
+    pub etcd_user: Option<String>,
+    /// The file holding that user's password.
+    #[serde(default)]
+    pub etcd_password_file: Option<PathBuf>,
+}
+
+impl NamesAt {
+    /// etcd as laye asks it: as `etcd_user`, when one is named.
+    fn etcd(
+        &self,
+        client: Client<HttpConnector, Full<Bytes>>,
+    ) -> Result<etcd::Etcd, Box<sacred_error::Error>> {
+        let Some(user) = &self.etcd_user else {
+            return Ok(etcd::Etcd::new(&self.etcd, client));
+        };
+        let Some(file) = &self.etcd_password_file else {
+            return Err(laye_peer::error(
+                "names",
+                "laye is told to ask etcd as a user, and not where its password is",
+                format!("[names] etcd_user = {user:?} names no etcd_password_file"),
+            ));
+        };
+        let password = std::fs::read_to_string(file).map_err(|e| {
+            laye_peer::error(
+                "names",
+                "the password laye asks etcd with was not read",
+                format!("{}: {e}", file.display()),
+            )
+        })?;
+        Ok(etcd::Etcd::new(&self.etcd, client).as_user(user, password.trim()))
+    }
 }
 
 pub struct Front {
@@ -157,13 +192,16 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
         .map_err(|e| laye_peer::error("listen", "laye's address is not known", e.to_string()))?;
     let client: Client<HttpConnector, Full<Bytes>> =
         Client::builder(TokioExecutor::new()).build_http();
-    let names = config.names.as_ref().map(|at| names::Names {
-        etcd: etcd::Etcd::new(&at.etcd, client.clone()),
-        admitters: at.admitters.clone(),
-    });
+    let names = match config.names.as_ref() {
+        Some(at) => Some(names::Names {
+            etcd: at.etcd(client.clone())?,
+            admitters: at.admitters.clone(),
+        }),
+        None => None,
+    };
     let passkeys = match (&config.passkeys, &config.names) {
         (Some(at), Some(names)) => Some(passkeys::Passkeys::new(
-            etcd::Etcd::new(&names.etcd, client.clone()),
+            names.etcd(client.clone())?,
             at.clone(),
         )),
         (Some(_), None) => {
