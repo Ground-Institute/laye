@@ -1073,3 +1073,112 @@ async fn a_person_is_shown_by_name_and_photo_proven_with_their_binding() {
     .unwrap();
     assert_eq!(refused.status, 403, "{}", refused.text);
 }
+
+// "and we should not show did's the way you show them now"
+// "why not show the name"
+//
+/// What waits is shown from who said it: a session that holds no name, by the
+/// label it was admitted under; a key the person said yes to, by the person's
+/// name. Never its DID while laye knows any of these.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sender_without_a_name_is_shown_by_its_label_or_its_person() {
+    let etcd = etcd("called").await;
+    let node = laye_me::fresh();
+    let browser = laye_me::fresh();
+    let front = laye(
+        "called-q",
+        &etcd.at,
+        vec!["github:1739143".into()],
+        vec![hex(&public(&node))],
+    )
+    .await;
+    let mut passkey = Authenticator::new();
+    let held = [binding(&node, &browser, "github:1739143")];
+    assert_eq!(
+        enrol(front, AT_RP, &browser, &held, &passkey).await.status,
+        200
+    );
+    let session = sign_in(front, AT_RP, &mut passkey).await.cookie.unwrap();
+    let shown = json!({ "name": "Brandon", "picture": "", "account": "onf" });
+    let kept = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/person",
+        &session,
+        &json!({ "binding": held[0], "shown": shown }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(kept.status, 200, "{}", kept.text);
+
+    // ~/.qntx/key, said yes to.
+    let qntx_key = laye_me::fresh();
+    let asked = form(
+        front,
+        "/laye/device",
+        "",
+        &format!("label=laptop&did={}", did(&qntx_key).replace(':', "%3A")),
+    )
+    .await;
+    let yes = json!({ "user_code": asked.body["user_code"] }).to_string();
+    let said_yes = ask(front, RP, "POST", "/laye/device/approve", &session, &yes)
+        .await
+        .unwrap();
+    assert_eq!(said_yes.status, 200, "{}", said_yes.text);
+
+    // Birch is named; oak is admitted under a label and holds no name.
+    let oak_label = "oak laptop";
+    let (birch, oak) = (laye_me::fresh(), laye_me::fresh());
+    for (key, label) in [(&birch, "Birch"), (&oak, oak_label)] {
+        let admitted = form(
+            front,
+            "/auth/admit",
+            &signed(&qntx_key),
+            &format!(
+                "did={}&label={}",
+                did(key).replace(':', "%3A"),
+                label.replace(' ', "+")
+            ),
+        )
+        .await;
+        assert_eq!(admitted.status, 200, "{}", admitted.text);
+    }
+    let named = signed_ask(
+        front,
+        "POST",
+        "/i/name",
+        &birch,
+        &json!({ "name": "Birch" }).to_string(),
+    )
+    .await;
+    assert_eq!(named.status, 200, "{}", named.text);
+
+    for (n, from) in [&oak, &qntx_key].into_iter().enumerate() {
+        let send = json!({
+            "message": { "messageId": format!("called-{n}"), "role": "ROLE_USER", "parts": [{ "text": "hello" }] },
+            "configuration": { "returnImmediately": true },
+        });
+        let sent = signed_ask(
+            front,
+            "POST",
+            "/a2a/Birch/message:send",
+            from,
+            &send.to_string(),
+        )
+        .await;
+        assert_eq!(sent.status, 200, "{}", sent.text);
+    }
+
+    let waits = ask(front, RP, "GET", "/laye/collected", &session, "")
+        .await
+        .unwrap();
+    assert_eq!(waits.status, 200, "{}", waits.text);
+    let from: Vec<&str> = waits.body["collected"][0]["waiting"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["from"].as_str().unwrap())
+        .collect();
+    assert_eq!(from, [oak_label, "Brandon"], "{}", waits.text);
+}

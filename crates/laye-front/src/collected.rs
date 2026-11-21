@@ -508,6 +508,43 @@ impl Collections<'_> {
         })
     }
 
+    // "and we should not show did's the way you show them now"
+    // "why not show the name"
+    //
+    /// What an agent is called where it is shown: the name it holds; else
+    /// the label it was admitted under; else the person whose key it is, by
+    /// their name; its DID only when laye knows none of these.
+    pub async fn called(&self, did: &str) -> Result<String, String> {
+        if let Some(named) = self.etcd.get(&format!("/named/{did}")).await? {
+            let at = String::from_utf8_lossy(&named.value).into_owned();
+            if let Some(held) = self.etcd.get(&at).await? {
+                let name = serde_json::from_slice::<Value>(&held.value)
+                    .ok()
+                    .and_then(|v| v.get("name").and_then(Value::as_str).map(str::to_string))
+                    .filter(|n| !n.is_empty());
+                if let Some(name) = name {
+                    return Ok(name);
+                }
+            }
+        }
+        if let Some(admitted) = self.etcd.get(&format!("/admitted/{did}")).await? {
+            let label = serde_json::from_slice::<Value>(&admitted.value)
+                .ok()
+                .and_then(|v| v.get("label").and_then(Value::as_str).map(str::to_string))
+                .filter(|l| !l.trim().is_empty());
+            if let Some(label) = label {
+                return Ok(label);
+            }
+        }
+        if let Some(person) = self.person_of_key(did).await?
+            && let Some(shown) = crate::passkeys::shown_of(self.etcd, &person).await?
+            && !shown.name.is_empty()
+        {
+            return Ok(shown.name);
+        }
+        Ok(did.to_string())
+    }
+
     /// The person a key is: said yes to itself, or admitted by a key that was.
     pub async fn person_of_key(&self, did: &str) -> Result<Option<String>, String> {
         if let Some(yes) = devices::whose(self.etcd, did).await? {
