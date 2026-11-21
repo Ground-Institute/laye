@@ -18,6 +18,10 @@ pub struct Etcd {
     /// Where etcd answers its clients: http://127.0.0.1:2379.
     at: String,
     client: Client<HttpConnector, Full<Bytes>>,
+    /// The user and password laye asks as, when it asks as one.
+    user: Option<(String, String)>,
+    /// The token etcd gave for them, until it says it is no longer one.
+    token: std::sync::Mutex<Option<String>>,
 }
 
 /// A key's value, and the revision it was last written at.
@@ -37,7 +41,48 @@ impl Etcd {
         Etcd {
             at: at.trim_end_matches('/').to_string(),
             client,
+            user: None,
+            token: std::sync::Mutex::new(None),
         }
+    }
+
+    // "names and collections and just smaller things, messages say's status"
+    //
+    /// Asks as `user`, whose role reaches only the keys laye keeps. An etcd
+    /// whose authentication is not enabled yet is asked as nobody.
+    pub fn as_user(mut self, user: &str, password: &str) -> Self {
+        self.user = Some((user.to_string(), password.to_string()));
+        self
+    }
+
+    /// The token to ask with: the one held, or a new one when `fresh` or
+    /// none is held. None when laye asks as nobody, or etcd authenticates
+    /// nobody yet.
+    async fn token(&self, fresh: bool) -> Result<Option<String>, String> {
+        let Some((user, password)) = &self.user else {
+            return Ok(None);
+        };
+        if !fresh && let Some(held) = self.token.lock().map_err(|e| e.to_string())?.clone() {
+            return Ok(Some(held));
+        }
+        let given = match self
+            .post(
+                "/v3/auth/authenticate",
+                &json!({ "name": user, "password": password }),
+                None,
+            )
+            .await
+        {
+            Ok(answer) => answer
+                .get("token")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("etcd gave {user} no token"))?,
+            Err(why) if why.contains("authentication is not enabled") => return Ok(None),
+            Err(why) => return Err(why),
+        };
+        *self.token.lock().map_err(|e| e.to_string())? = Some(given.clone());
+        Ok(Some(given))
     }
 
     /// The key's value, or None when nothing is kept at it.
@@ -140,9 +185,25 @@ impl Etcd {
     }
 
     async fn ask(&self, path: &str, body: Value) -> Result<Value, String> {
+        let token = self.token(false).await?;
+        match self.post(path, &body, token.as_deref()).await {
+            // A token lasts while it is used: one left unused is asked for again.
+            Err(why) if token.is_some() && why.contains("invalid auth token") => {
+                let token = self.token(true).await?;
+                self.post(path, &body, token.as_deref()).await
+            }
+            answered => answered,
+        }
+    }
+
+    async fn post(&self, path: &str, body: &Value, token: Option<&str>) -> Result<Value, String> {
         let url = format!("{}{path}", self.at);
-        let request = Request::post(&url)
-            .header(hyper::header::CONTENT_TYPE, "application/json")
+        let mut request =
+            Request::post(&url).header(hyper::header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            request = request.header(hyper::header::AUTHORIZATION, token);
+        }
+        let request = request
             .body(Full::new(Bytes::from(body.to_string())))
             .map_err(|e| e.to_string())?;
         let response = self
