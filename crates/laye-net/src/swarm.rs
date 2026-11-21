@@ -325,9 +325,14 @@ fn redial(
 ) {
     use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
     for (addr, peer) in stay_with {
+        // From a port of its own: dialed from the port this peer listens on, a
+        // peer that came back is the same pair of addresses as the connection
+        // before it, which the host still holds closing, and the dial is refused
+        // (os error 48) until it lets go, about 30 s on l.
         let dial = DialOpts::peer_id(*peer)
             .addresses(vec![addr.clone()])
             .condition(PeerCondition::DisconnectedAndNotDialing)
+            .allocate_new_port()
             .build();
         match swarm.dial(dial) {
             Ok(()) | Err(libp2p::swarm::DialError::DialPeerConditionFalse(_)) => {}
