@@ -16,8 +16,9 @@
   "vars": {
     // Where a browser's laye dials C.
     "LISTEN": "/dns4/c.icy-pine-9304.workers.dev/tcp/443/wss",
-    // The topics C carries between the peers connected to it.
-    "TOPICS": "laye/through-a-peer"
+    // The topics C carries between the peers connected to it: the cluster's,
+    // as q's, k's and l's laye-peer carry it, and laye's own proof's.
+    "TOPICS": "laye/cluster,laye/through-a-peer"
   },
   "observability": { "enabled": true }
 }
