@@ -21,6 +21,7 @@ pub mod invitations;
 mod issuer;
 pub mod jwt;
 mod mail;
+pub mod mycelia_door;
 pub mod names;
 pub mod passkeys;
 
@@ -170,6 +171,8 @@ struct Inner {
     names: Option<names::Names>,
     passkeys: Option<passkeys::Passkeys>,
     web: Option<PathBuf>,
+    /// Journeys home from mycelia's door, and the sessions held for it.
+    journeys: mycelia_door::Journeys,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -233,6 +236,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
         held: Mutex::new(held),
         issued: issuer::Issued::default(),
         invitations: invited,
+        journeys: mycelia_door::Journeys::default(),
     });
     let run = tokio::spawn(async move {
         let mut tick = tokio::time::interval(RETRY);
@@ -335,6 +339,48 @@ fn session_asking(
         })
         .ok_or("no person's session is presented")?;
     passkeys::person_of(token, &inner.did, now())
+}
+
+/// A cookie the request carries, by name.
+fn cookie_of<'a>(parts: &'a hyper::http::request::Parts, name: &str) -> Option<&'a str> {
+    parts
+        .headers
+        .get_all(hyper::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .find_map(|c| c.trim().strip_prefix(name)?.strip_prefix('='))
+}
+
+/// The person what is collected is shown to and acted on for: their passkey
+/// session, or the session mycelia's door collected for them.
+fn collecting_for(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+) -> Result<(String, String), String> {
+    let bearer = parts
+        .headers
+        .get(hyper::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    match bearer {
+        Some(token) => mycelia_door::person_of(token.trim(), &inner.did, now()),
+        None => person_asking(inner, parts),
+    }
+}
+
+fn door_cookie(ticket: Option<&str>) -> String {
+    match ticket {
+        Some(ticket) => format!(
+            "{}={ticket}; Path=/laye; HttpOnly; Secure; SameSite=Lax; Max-Age={}",
+            mycelia_door::COOKIE,
+            mycelia_door::JOURNEY
+        ),
+        None => format!(
+            "{}=; Path=/laye; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+            mycelia_door::COOKIE
+        ),
+    }
 }
 
 fn session_cookie(token: Option<&str>) -> String {
@@ -484,11 +530,110 @@ async fn as_person(
             };
             return Some(json(code(status), body.to_string()));
         }
+        // "kept. kept bro, i want to put my finger on, and then not have to thing about it anymore"
+        // 「[Opus 5.5] mycelia's door: the journey opens here, the passkey is done」
+        // 「[Opus 5.5] on laye's page, and the browser goes back with a ticket.」
+        "/laye/door/home" if get => {
+            let query = issuer::form(parts.uri.query().unwrap_or_default());
+            let door = query.get("door").map_or("", String::as_str);
+            let ticket = match inner.journeys.open(door, now()) {
+                Ok(ticket) => ticket,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let mut resp = said(StatusCode::FOUND, "");
+            let headers = resp.headers_mut();
+            headers.insert(
+                hyper::header::LOCATION,
+                hyper::header::HeaderValue::from_static("/laye/me?door=1"),
+            );
+            if let Ok(cookie) = hyper::header::HeaderValue::from_str(&door_cookie(Some(&ticket))) {
+                headers.insert(hyper::header::SET_COOKIE, cookie);
+            }
+            return Some(resp);
+        }
+        "/laye/door/send" if post => {
+            let (person, level) = match person_asking(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let ticket = cookie_of(parts, mycelia_door::COOKIE).unwrap_or_default();
+            let (status, body) =
+                match inner
+                    .journeys
+                    .send(ticket, &person, &level, &inner.did, &inner.key, now())
+                {
+                    Ok(to) => (200, serde_json::json!({ "to": to })),
+                    Err((status, why)) => (status, serde_json::json!({ "error": why })),
+                };
+            let mut resp = json(code(status), body.to_string());
+            if let Ok(cookie) = hyper::header::HeaderValue::from_str(&door_cookie(None)) {
+                resp.headers_mut().insert(hyper::header::SET_COOKIE, cookie);
+            }
+            return Some(resp);
+        }
+        "/laye/door/home/result" if get => {
+            let query = issuer::form(parts.uri.query().unwrap_or_default());
+            let ticket = query.get("home").map_or("", String::as_str);
+            let door = query.get("door").map_or("", String::as_str);
+            let (status, body) = match inner.journeys.collect(ticket, door, now()) {
+                Ok(got) => {
+                    let shown = shown_for(inner, keys, &got.person).await;
+                    (
+                        200,
+                        serde_json::json!({
+                            "admitted_as": got.person,
+                            "name": shown.name,
+                            "picture": shown.picture,
+                            "until": got.until,
+                            "session": got.token,
+                        }),
+                    )
+                }
+                Err((status, why)) => (status, serde_json::json!({ "error": why })),
+            };
+            return Some(json(code(status), body.to_string()));
+        }
+        // "ag's presses go to laye"
+        // 「[Opus 5.5] A press as ag makes it at the node, /api/collected/<act> with」
+        // 「[Opus 5.5] {"to", ...}, is made here at /laye/collected/<act>.」
+        _ if post
+            && path
+                .strip_prefix("/laye/collected/")
+                .is_some_and(|act| ACTS.contains(&act)) =>
+        {
+            let act = path.strip_prefix("/laye/collected/").unwrap_or_default();
+            let (person, level) = match collecting_for(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let held = collected::Collections {
+                etcd: &keys.etcd,
+                laye: &inner.did,
+            };
+            let (status, body) = act_on(&held, &person, &level, Some(act), body).await;
+            return Some(json(code(status), body.to_string()));
+        }
         "/laye/collected" | "/laye/collected/act" => {
             // "and as a human i can dial it"
             // What waits is the person's to see and to act on, in their
-            // passkey session: no key does either.
-            let (person, level) = match person_asking(inner, parts) {
+            // passkey session or the one mycelia's door collected for them:
+            // no key does either.
+            let (person, level) = match collecting_for(inner, parts) {
                 Ok(who) => who,
                 Err(why) => {
                     return Some(json(
@@ -504,7 +649,7 @@ async fn as_person(
             let (status, body) = if path == "/laye/collected" && get {
                 collected_for(&held, &person, &level).await
             } else if path == "/laye/collected/act" && post {
-                act_on(&held, &person, &level, body).await
+                act_on(&held, &person, &level, None, body).await
             } else {
                 return None;
             };
@@ -577,17 +722,25 @@ async fn collected_for(
     (200, serde_json::json!({ "collected": seen }))
 }
 
+/// What a person does with what waits for an agent.
+const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
+
 /// A person's act on what waits for one agent:
 /// {"did", "act": release|hold|later|cancel|edit, "ids", "says", "until", "id"}.
+/// An act the path names stands for the body's, and `to` for `did`, as ag
+/// asks the node (QNTX server/collected.go).
 async fn act_on(
     held: &collected::Collections<'_>,
     person: &str,
     level: &str,
+    named: Option<&str>,
     body: &[u8],
 ) -> (u16, serde_json::Value) {
     #[derive(Deserialize)]
     struct Asked {
+        #[serde(alias = "to")]
         did: String,
+        #[serde(default)]
         act: String,
         #[serde(default)]
         ids: Vec<String>,
@@ -610,7 +763,7 @@ async fn act_on(
         );
     }
     let says = asked.says.filter(|s| !s.trim().is_empty());
-    let act = match asked.act.as_str() {
+    let act = match named.unwrap_or(asked.act.as_str()) {
         "release" => collected::Act::Release {
             ids: asked.ids,
             says,
