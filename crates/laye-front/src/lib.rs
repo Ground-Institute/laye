@@ -1200,17 +1200,8 @@ async fn as_collections(
                     "what is said to a name crosses the row as text, and this said none",
                 ));
             }
-            let from = match keys.etcd.get(&format!("/named/{subject}")).await {
-                Ok(Some(kv)) => {
-                    let at = String::from_utf8_lossy(&kv.value).into_owned();
-                    let name = at.strip_prefix("/names/").unwrap_or(&at).to_string();
-                    named(&keys.etcd, &name)
-                        .await
-                        .ok()
-                        .flatten()
-                        .map_or(name, |(_, n)| n)
-                }
-                Ok(None) => subject.to_string(),
+            let from = match held.called(subject).await {
+                Ok(called) => called,
                 Err(why) => return failed(why),
             };
             let context = send
