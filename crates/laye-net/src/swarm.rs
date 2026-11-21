@@ -3,7 +3,7 @@
 
 use crate::{NetError, NetEvent};
 use futures::channel::mpsc;
-use futures::{StreamExt, select_biased};
+use futures::{FutureExt, StreamExt, select_biased};
 use laye_protocol::{PeerId, Topic};
 use libp2p::core::transport::ListenerId;
 use libp2p::core::transport::Transport as _;
@@ -168,18 +168,26 @@ fn build_swarm_with_transport(
     let noise = libp2p::noise::Config::new(&keypair).map_err(|e| NetError::ProviderInternal {
         reason: format!("noise config from keypair: {e}"),
     })?;
+    // A peer of the cluster is dialed by the name its node has
+    // (/dns4/k/tcp/4001/ws), so names are resolved beneath the socket.
+    // A host that names no resolver (no /etc/resolv.conf, as in nix's build
+    // sandbox) resolves with hickory's own, and its hosts file, rather than
+    // not starting at all.
+    let tcp = || libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default());
+    let named = libp2p::dns::tokio::Transport::system(tcp()).unwrap_or_else(|_| {
+        libp2p::dns::tokio::Transport::custom(
+            tcp(),
+            libp2p::dns::ResolverConfig::default(),
+            libp2p::dns::ResolverOpts::default(),
+        )
+    });
     let swarm = SwarmBuilder::with_existing_identity(keypair)
         .with_tokio()
         .with_other_transport(move |_key| {
-            // A peer named by its host, as C is, is dialed through DNS.
-            let tcp = libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default());
-            let named = libp2p::dns::tokio::Transport::system(tcp)?;
-            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(
-                libp2p::websocket::Config::new(named)
-                    .upgrade(upgrade::Version::V1)
-                    .authenticate(noise)
-                    .multiplex(libp2p::yamux::Config::default()),
-            )
+            libp2p::websocket::Config::new(named)
+                .upgrade(upgrade::Version::V1)
+                .authenticate(noise)
+                .multiplex(libp2p::yamux::Config::default())
         })
         .map_err(|e| NetError::ProviderInternal {
             reason: format!("swarm transport: {e}"),
@@ -246,16 +254,33 @@ pub(crate) async fn drive_swarm(
         }
     }
 
+    // "before we have more ergonomic names, we should have the cluster be ready everywhere right?"
+    //
+    // A peer named by its id (/p2p/...) is one this peer stays connected to:
+    // dialed again while it is away, so a peer that restarts is back in the
+    // mesh without anyone dialing it by hand.
+    let mut stay_with: Vec<(libp2p::Multiaddr, libp2p::PeerId)> = Vec::new();
     for addr_str in &bootstrap_addrs {
         match addr_str.parse::<libp2p::Multiaddr>() {
             Ok(addr) => {
-                if let Err(e) = swarm.dial(addr) {
-                    push_event(
-                        &events,
-                        NetEvent::Error(NetError::NotConnected {
-                            reason: format!("dial {addr_str}: {e}"),
-                        }),
-                    );
+                let peer = addr.iter().find_map(|p| match p {
+                    libp2p::multiaddr::Protocol::P2p(peer) => Some(peer),
+                    _ => None,
+                });
+                match peer {
+                    Some(peer) => {
+                        stay_with.push((addr, peer));
+                    }
+                    None => {
+                        if let Err(e) = swarm.dial(addr) {
+                            push_event(
+                                &events,
+                                NetEvent::Error(NetError::NotConnected {
+                                    reason: format!("dial {addr_str}: {e}"),
+                                }),
+                            );
+                        }
+                    }
                 }
             }
             Err(e) => {
@@ -268,9 +293,15 @@ pub(crate) async fn drive_swarm(
             }
         }
     }
+    redial(&mut swarm, &stay_with, &events);
+    let mut again = futures_timer::Delay::new(REDIAL).fuse();
 
     loop {
         select_biased! {
+            () = again => {
+                redial(&mut swarm, &stay_with, &events);
+                again = futures_timer::Delay::new(REDIAL).fuse();
+            }
             cmd = cmd_rx.next() => {
                 match cmd {
                     Some(Cmd::Publish { topic, bytes }) => {
@@ -318,6 +349,34 @@ pub(crate) async fn drive_swarm(
                     other => handle_swarm_event(other, &events),
                 }
             }
+        }
+    }
+}
+
+/// How long a peer this one stays with is away before it is dialed again.
+const REDIAL: Duration = Duration::from_secs(10);
+
+/// Dials each peer this one stays with that it is neither connected to nor
+/// already dialing.
+fn redial(
+    swarm: &mut Swarm<LayeBehaviour>,
+    stay_with: &[(libp2p::Multiaddr, libp2p::PeerId)],
+    events: &Arc<Mutex<Vec<NetEvent>>>,
+) {
+    use libp2p::swarm::dial_opts::{DialOpts, PeerCondition};
+    for (addr, peer) in stay_with {
+        let dial = DialOpts::peer_id(*peer)
+            .addresses(vec![addr.clone()])
+            .condition(PeerCondition::DisconnectedAndNotDialing)
+            .build();
+        match swarm.dial(dial) {
+            Ok(()) | Err(libp2p::swarm::DialError::DialPeerConditionFalse(_)) => {}
+            Err(e) => push_event(
+                events,
+                NetEvent::Error(NetError::NotConnected {
+                    reason: format!("dial {addr}: {e}"),
+                }),
+            ),
         }
     }
 }

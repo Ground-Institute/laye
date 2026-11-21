@@ -61,8 +61,13 @@ async fn a_peer_that_cannot_listen_says_it_is_unreachable() {
     let deadline = Instant::now() + Duration::from_secs(10);
     let nowhere = "/ip4/192.0.2.1/tcp/0/ws";
 
-    let (peer, drive) =
-        laye_peer::listening(laye_me::fresh(), vec![nowhere.into()], Vec::new()).unwrap();
+    let (peer, drive) = laye_peer::listening(
+        laye_me::fresh(),
+        vec![nowhere.into()],
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
     tokio::spawn(drive);
     loop {
         assert!(
@@ -94,6 +99,7 @@ async fn one_message_goes_from_one_peer_to_another_through_a_third() {
     let (hub, drive) = laye_peer::listening(
         laye_me::fresh(),
         vec!["/ip4/127.0.0.1/tcp/0/ws".into()],
+        Vec::new(),
         vec![topic.clone()],
     )
     .unwrap();
