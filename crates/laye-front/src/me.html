@@ -210,7 +210,7 @@ async function asked(path, body) {
     credentials: 'same-origin',
   });
   const read = await answer.json().catch(() => ({}));
-  if (!answer.ok) throw new Error(read.error || read.error_description || `laye answered ${answer.status}`);
+  if (!answer.ok) throw Object.assign(new Error(read.error || read.error_description || `laye answered ${answer.status}`), { status: answer.status });
   return read;
 }
 
@@ -320,7 +320,9 @@ async function gather() {
   let providers = [];
   if (me.level === 'ROOT') {
     const [held, offered] = await Promise.all([
-      asked('/laye/invitations').catch((e) => ({ error: String(e.message || e), invitations: [] })),
+      // Invitations are answered by the laye people log in at; at another
+      // laye's name nobody answers them, and there is nothing to show.
+      asked('/laye/invitations').catch((e) => (e.status === 404 ? null : { error: String(e.message || e), invitations: [] })),
       fetch(CEREMONY + '/auth/binding/providers', { credentials: 'include' }).then((a) => (a.ok ? a.json() : {})).catch(() => ({})),
     ]);
     invites = held;
