@@ -509,8 +509,21 @@ function waitsNodes(got) {
   return nodes;
 }
 
+// "kept. kept bro, i want to put my finger on, and then not have to thing about it anymore"
+// Sent here by mycelia's door (/laye/door/home): signed in, the person goes
+// back to it, carrying the ticket its session is held under.
+const fromDoor = new URLSearchParams(location.search).get('door') === '1';
+
 async function draw() {
   const got = await gather();
+  if (got.me && fromDoor) {
+    const { to } = await asked('/laye/door/send', {});
+    history.replaceState(null, '', location.pathname);
+    say('back to mycelia');
+    location.assign(to);
+    return;
+  }
+  if (!got.me && fromDoor) say('sign in to hand mycelia your session');
   const { middle, right } = got.me ? signedIn(got) : signedOut(got);
   // One synchronous change: the browser draws it once.
   stand.replaceChildren(...middle);
