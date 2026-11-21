@@ -256,8 +256,24 @@ impl AsyncWrite for Accepted {
 }
 
 impl Drop for Inner {
-    // A socket left open holds the browser's side with nothing reading it.
+    // A socket left open holds the browser's side with nothing reading it. Its
+    // listeners go first: they are dropped with this, and the close it fires
+    // would call them after.
     fn drop(&mut self) {
+        let on_message = self._on_message.as_ref().unchecked_ref();
+        let on_close = self._on_close.as_ref().unchecked_ref();
+        drop(
+            self.socket
+                .remove_event_listener_with_callback("message", on_message),
+        );
+        drop(
+            self.socket
+                .remove_event_listener_with_callback("close", on_close),
+        );
+        drop(
+            self.socket
+                .remove_event_listener_with_callback("error", on_close),
+        );
         drop(self.socket.close());
     }
 }

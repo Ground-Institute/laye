@@ -13,25 +13,14 @@ use std::time::Duration;
 use base64::Engine;
 use laye_net::{Accepting, Net, NetEvent, Topic};
 use worker::{
-    Context, DurableObject, Env, Request, Response, Result, State, WebSocketPair, console_error,
-    console_log, durable_object, event,
+    DurableObject, Env, Request, Response, Result, State, WebSocketPair, console_error,
+    console_log, durable_object,
 };
 
 const IDENTIFY: &str = "/laye/1.0.0";
 
-#[event(fetch)]
-async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
-    let peer = env.durable_object("PEER")?.id_from_name("c")?.get_stub()?;
-    if req.path() == "/health" {
-        let said = peer
-            .fetch_with_str("https://c/peer")
-            .await?
-            .json::<serde_json::Value>()
-            .await?;
-        return Response::from_json(&serde_json::json!({ "c": "up", "peer": said }));
-    }
-    peer.fetch_with_request(req).await
-}
+// 「[Opus 5.5] The Worker in front of Peer is src/sentry.js, so Sentry wraps a
+// plain handler.」
 
 #[durable_object]
 pub struct Peer {
