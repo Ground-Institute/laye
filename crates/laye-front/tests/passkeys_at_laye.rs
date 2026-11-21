@@ -196,6 +196,8 @@ async fn laye(name: &str, etcd: &str, roots: Vec<String>, signers: Vec<String>) 
             names: Some(NamesAt {
                 etcd: etcd.into(),
                 admitters: Vec::new(),
+                etcd_user: None,
+                etcd_password_file: None,
             }),
             passkeys: Some(PasskeysAt {
                 rp_id: RP.into(),

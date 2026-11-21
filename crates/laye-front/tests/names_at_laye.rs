@@ -188,6 +188,8 @@ fn config(qntx: SocketAddr, dir: &std::path::Path, etcd: &str, admitters: Vec<St
         names: Some(NamesAt {
             etcd: etcd.into(),
             admitters,
+            etcd_user: None,
+            etcd_password_file: None,
         }),
         passkeys: None,
         web: None,
@@ -515,4 +517,148 @@ async fn an_admission_held_elsewhere_is_told_to_this_qntx() {
             .any(|a| a.path == "/auth/admit")
     })
     .await;
+}
+
+// "names and collections and just smaller things, messages say's status"
+//
+/// The prefixes laye keeps, and nothing else, reached by laye's etcd user.
+const LAYES: [&str; 10] = [
+    "/names/",
+    "/named/",
+    "/admitted/",
+    "/keys/",
+    "/people/",
+    "/passkeys/",
+    "/devices/",
+    "/collected/",
+    "/tasks/",
+    "/news/",
+];
+
+/// etcd's gateway, asked with a token or none.
+async fn gateway(
+    at: SocketAddr,
+    path: &str,
+    token: &str,
+    body: serde_json::Value,
+) -> (u16, String) {
+    post(at, path, token, "application/json", &body.to_string())
+        .await
+        .unwrap()
+}
+
+fn b64(s: &str) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(s)
+}
+
+/// With etcd's authentication enabled and laye asking as a user whose role
+/// reaches only what laye keeps, a session is admitted and named, and that
+/// user writes nothing anywhere else.
+#[tokio::test(flavor = "multi_thread")]
+async fn laye_asks_etcd_as_its_own_user_and_reaches_only_what_it_keeps() {
+    let etcd = etcd("user").await;
+    let at: SocketAddr = etcd.at.trim_start_matches("http://").parse().unwrap();
+    for (path, body) in [
+        ("/v3/auth/role/add", serde_json::json!({ "name": "root" })),
+        (
+            "/v3/auth/user/add",
+            serde_json::json!({ "name": "root", "password": "root-word" }),
+        ),
+        (
+            "/v3/auth/user/grant",
+            serde_json::json!({ "user": "root", "role": "root" }),
+        ),
+        ("/v3/auth/role/add", serde_json::json!({ "name": "laye" })),
+        (
+            "/v3/auth/user/add",
+            serde_json::json!({ "name": "laye", "password": "laye-word" }),
+        ),
+        (
+            "/v3/auth/user/grant",
+            serde_json::json!({ "user": "laye", "role": "laye" }),
+        ),
+    ] {
+        let (status, said) = gateway(at, path, "", body).await;
+        assert_eq!(status, 200, "{path}: {said}");
+    }
+    for prefix in LAYES {
+        let mut end = prefix.as_bytes().to_vec();
+        *end.last_mut().unwrap() += 1;
+        let perm = serde_json::json!({
+            "name": "laye",
+            "perm": { "permType": "READWRITE", "key": b64(prefix), "range_end": b64(std::str::from_utf8(&end).unwrap()) },
+        });
+        let (status, said) = gateway(at, "/v3/auth/role/grant", "", perm).await;
+        assert_eq!(status, 200, "{prefix}: {said}");
+    }
+    let (status, said) = gateway(at, "/v3/auth/enable", "", serde_json::json!({})).await;
+    assert_eq!(status, 200, "{said}");
+
+    let dir = scratch("user-l");
+    std::fs::write(dir.join("etcd-password"), "laye-word\n").unwrap();
+    let mut asking = config(free_addr().await, &dir, &etcd.at, Vec::new());
+    let person = laye_me::fresh();
+    if let Some(names) = asking.names.as_mut() {
+        names.admitters = vec![did(&person)];
+        names.etcd_user = Some("laye".into());
+        names.etcd_password_file = Some(dir.join("etcd-password"));
+    }
+    let (front, _run) = laye_front::start(asking, laye_me::fresh()).await.unwrap();
+
+    let alder = laye_me::fresh();
+    assert_eq!(admit(front.addr, &person, &alder, "a").await.0, 200);
+    let (status, body) = name(front.addr, &alder, "Alder").await;
+    assert_eq!(status, 200, "{body}");
+
+    // laye's user writes nothing outside what laye keeps.
+    let (status, said) = gateway(
+        at,
+        "/v3/auth/authenticate",
+        "",
+        serde_json::json!({ "name": "laye", "password": "laye-word" }),
+    )
+    .await;
+    assert_eq!(status, 200, "{said}");
+    let token = serde_json::from_str::<serde_json::Value>(&said).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, said) = gateway(
+        at,
+        "/v3/kv/put",
+        &token,
+        serde_json::json!({ "key": b64("/attestations/default/x"), "value": b64("x") }),
+    )
+    .await;
+    assert_ne!(status, 200, "{said}");
+    assert!(said.contains("permission denied"), "{said}");
+    let (status, said) = gateway(
+        at,
+        "/v3/kv/put",
+        &token,
+        serde_json::json!({ "key": b64("/names/birch"), "value": b64("x") }),
+    )
+    .await;
+    assert_eq!(status, 200, "{said}");
+}
+
+/// A laye told its user before etcd authenticates anyone asks as nobody, so
+/// the user is given to each laye first and authentication enabled after.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_laye_given_a_user_asks_an_etcd_that_authenticates_nobody_yet() {
+    let etcd = etcd("not-yet").await;
+    let dir = scratch("not-yet-l");
+    std::fs::write(dir.join("etcd-password"), "laye-word\n").unwrap();
+    let mut asking = config(free_addr().await, &dir, &etcd.at, Vec::new());
+    let person = laye_me::fresh();
+    if let Some(names) = asking.names.as_mut() {
+        names.admitters = vec![did(&person)];
+        names.etcd_user = Some("laye".into());
+        names.etcd_password_file = Some(dir.join("etcd-password"));
+    }
+    let (front, _run) = laye_front::start(asking, laye_me::fresh()).await.unwrap();
+    let alder = laye_me::fresh();
+    assert_eq!(admit(front.addr, &person, &alder, "a").await.0, 200);
+    assert_eq!(name(front.addr, &alder, "Alder").await.0, 200);
 }
