@@ -2,6 +2,52 @@
 
 Each slice says what exists when it is done, then what proves it.
 
+## P2P2A2A_004 Every collection waiting on a person, in one place
+
+Owner: Cumulus.
+
+Of what was said on 2026-11-22:
+
+"i see, so it's workable now, but isn't spectacular to demo or be a daily driver, this is very much an early prototype of the core idea."
+
+"well, i see the lampligher one on my phone, but appareantly i cant delay it? or i get no feedback on it?"
+
+"another issue is, that when i press it, it doesnt make me go to the actual collection, which is a real ux error"
+
+"it would be cool right? the combination of ag and the live activity seems powerful."
+
+"but what i also miss is, seeing the ones that are here right now, on my own machine, why those dont show up in the live activity."
+
+"what if i could have an interface, where i see all collections waiting for me, so not just one."
+
+"like a place where i can interact per collection, and move things around so i can set the chronological order, or exact timing if i want."
+
+"yeah, this is what needs to be happening anyways."
+
+"mycelia jusk asked for my finger twice in a row"
+
+"YOU, not me, but YOU, its DECIDED, WE WANT THIS"
+
+The lines below are not quotes. Each is an interpretation and carries its id.
+
+- [x] `P2P2A2A_A_004_01` What is collected reaches the person as it changes, not on the next time they ask.
+  Proof: laye#22 (on q since 2026-11-22 08:33:51 UTC) and mycelia#3. A `ground say` at 09:35:18 was in mycelia's `collected`, which ag draws, at 09:35:19.
+
+- [ ] `P2P2A2A_A_004_02` One collection: what a node collects for an agent is placed into laye, as `_003_06` says. QNTX keeps none of its own (`server/collected.go`); a GitHub or room wake for an agent is collected at laye like anything an agent says.
+  Proof: a merge GitHub tells Lamplighter of stands in ag and at `/laye/collected`; QNTX's `collected list` is empty.
+
+- [ ] `P2P2A2A_A_004_03` Each thing said has its own time and its own place in the order. What waits for an agent is no longer one due for all of it: the person moves one before another, or sets one to a moment, and it is delivered then, in that order.
+  Proof: three things wait for one agent; the person puts the last first and sets one to 14:00; the agent receives them in that order, the one set at 14:00.
+
+- [ ] `P2P2A2A_A_004_04` One page with every collection waiting on the person, at laye: each agent's, what it holds, and every act on it (release, hold, later, cancel, edit, move, set a time), held up to date by `/laye/collected/watch`.
+  Proof: with things waiting for three agents, the page shows all three; an act on one shows on the page, in ag and on the phone within seconds.
+
+- [ ] `P2P2A2A_A_004_05` The phone reads laye: the Live Activity stands for what waits at laye, the ones from this machine too. A tap opens that collection on the page. A delay shows until when before it leaves.
+  Proof: a `ground say` on l stands on the phone; tapping it opens its collection; delaying it shows its new time and the node holds it until then.
+
+- [ ] `P2P2A2A_A_004_06` A mycelia restart costs no finger: what ag was paired with outlives mycelia, and is still given to nothing but a press in ag.
+  Proof: mycelia is installed again; the next press in each session's ag asks no finger; a process that is not ag asking mycelia's socket is still refused.
+
 ## P2P2A2A_002 Laye in front of QNTX
 
 This is first. Of P2P2A2A_Q_001 and P2P2A2A_Q_002, and of what was said on 2026-11-15:
