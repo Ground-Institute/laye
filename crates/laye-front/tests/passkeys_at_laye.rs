@@ -204,6 +204,7 @@ async fn laye(name: &str, etcd: &str, roots: Vec<String>, signers: Vec<String>) 
                 origins: vec![AT_RP.into(), AT_L.into()],
             }),
             web: None,
+            apns: None,
         },
         laye_me::fresh(),
     )

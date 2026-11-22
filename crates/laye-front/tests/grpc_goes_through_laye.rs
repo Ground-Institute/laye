@@ -127,6 +127,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         names: None,
         passkeys: None,
         web: None,
+        apns: None,
     }
 }
 

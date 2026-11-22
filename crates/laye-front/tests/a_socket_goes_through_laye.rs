@@ -101,6 +101,7 @@ async fn a_websocket_goes_through_laye_and_qntx_is_told_whose_it_is() {
             names: None,
             passkeys: None,
             web: None,
+            apns: None,
         },
         laye_key.clone(),
     )

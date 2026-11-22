@@ -6,6 +6,9 @@
          it a build sits in App Store Connect unanswered and reaches nobody. -->
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <!-- What waits at laye stands on laye's own island (ios-common island/). -->
+    <key>NSSupportsLiveActivities</key>
+    <true/>
     <!-- laye:// from Safari: a node's login page hands its journey to the app. -->
     <key>CFBundleURLTypes</key>
     <array>

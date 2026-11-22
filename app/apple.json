@@ -20,5 +20,15 @@
       "AUTOFILL_CREDENTIAL_PROVIDER"
     ],
     ".location": []
+  },
+  "island": {
+    "profile": "laye island",
+    "display": "laye",
+    "session": "session",
+    "agent": "laye-island",
+    "release": "laye-island",
+    "mark": "circle.hexagongrid",
+    "name": "laye",
+    "accent": "c8a06e"
   }
 }

@@ -132,6 +132,9 @@
         {
           "env": {
             "APPLE_DEVELOPMENT_TEAM": "${{ secrets.APPLE_DEVELOPMENT_TEAM }}",
+            "ISLAND": "${{ runner.temp }}/ios-common/island",
+            "ISLAND_NODE": "https://laye.ground.institute",
+            "ISLAND_SENTRY_DSN": "${{ vars.ISLAND_SENTRY_DSN }}",
             "PROVISIONING_PROFILE": "laye"
           },
           "if": "steps.signing.outputs.held == 'true'",
@@ -151,7 +154,7 @@
           },
           "if": "steps.signing.outputs.held == 'true'",
           "name": "Build the signed IPA",
-          "run": "cargo tauri ios build --export-method app-store-connect --build-number ${{ github.run_number }}"
+          "run": "cargo tauri ios build --archive-only --build-number ${{ github.run_number }}\npython3 \"$IOS_COMMON/export-island.py\"\n"
         },
         {
           "id": "ipa",

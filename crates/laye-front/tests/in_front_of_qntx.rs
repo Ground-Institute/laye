@@ -117,6 +117,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         names: None,
         passkeys: None,
         web: None,
+        apns: None,
         held_at,
     }
 }
