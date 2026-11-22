@@ -1224,6 +1224,18 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
     // to log in, again and again.
     let headers = passed_on(&parts);
 
+    // "laye owning collections, with the island in laye."
+    // What a person's connector says to a session arrives at QNTX, which
+    // hands it here, signed as itself: it is collected, and goes when the
+    // person releases it.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && subject == inner.config.qntx_did
+        && parts.method == hyper::Method::POST
+        && parts.uri.path() == CONNECTOR_SAID
+    {
+        return connector_said(inner, keys, &body).await;
+    }
+
     // What an agent says to an agent, its Task, and the row it is delivered
     // on are laye's when it keeps passkeys: QNTX up or not.
     if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
@@ -1387,6 +1399,79 @@ fn task_json(t: &collected::Tasked) -> serde_json::Value {
             },
         },
     })
+}
+
+/// Where QNTX hands what a person's connector said to a name.
+pub const CONNECTOR_SAID: &str = "/laye/collected/said";
+
+/// What QNTX hands laye of a connector's words.
+#[derive(serde::Deserialize)]
+struct ConnectorSaid {
+    /// The name it was said to.
+    to: String,
+    /// The connector's own key.
+    from_did: String,
+    /// Who it is, as QNTX names it.
+    from: String,
+    says: String,
+    #[serde(default)]
+    context: String,
+}
+
+/// Collects what a connector said to a name, and answers its Task.
+async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) -> Response<Body> {
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let asked = match serde_json::from_slice::<ConnectorSaid>(body) {
+        Ok(s) if !s.says.trim().is_empty() && !s.from_did.is_empty() => s,
+        Ok(_) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                "to, from_did and says are each named",
+            );
+        }
+        Err(e) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                format!("not what a connector said: {e}"),
+            );
+        }
+    };
+    let (did, called) = match named(&keys.etcd, &asked.to).await {
+        Ok(Some(held)) => held,
+        Ok(None) => {
+            return said(
+                StatusCode::NOT_FOUND,
+                format!("nobody holds the name {}", asked.to),
+            );
+        }
+        Err(why) => return said(StatusCode::SERVICE_UNAVAILABLE, why),
+    };
+    let context = if asked.context.is_empty() {
+        a2a::new_context_id()
+    } else {
+        asked.context
+    };
+    match held
+        .collect(
+            &did,
+            &called,
+            &asked.from_did,
+            &asked.from,
+            &asked.says,
+            &context,
+            now(),
+        )
+        .await
+    {
+        Ok(task) => json(
+            StatusCode::OK,
+            serde_json::json!({ "task": task_json(&task) }).to_string(),
+        ),
+        Err(why) => said(StatusCode::SERVICE_UNAVAILABLE, why),
+    }
 }
 
 /// What an agent says to a name, the Task it is, the row of the person asking,
