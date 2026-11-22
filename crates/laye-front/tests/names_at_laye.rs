@@ -193,6 +193,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path, etcd: &str, admitters: Vec<St
         }),
         passkeys: None,
         web: None,
+        apns: None,
     }
 }
 

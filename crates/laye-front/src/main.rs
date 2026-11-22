@@ -27,6 +27,8 @@ struct File {
     passkeys: Option<laye_front::passkeys::PasskeysAt>,
     #[serde(default)]
     web: Option<std::path::PathBuf>,
+    #[serde(default)]
+    apns: Option<laye_front::apns::ApnsAt>,
 }
 
 #[derive(Deserialize)]
@@ -101,6 +103,7 @@ async fn main() {
             names: file.names,
             passkeys: file.passkeys,
             web: file.web,
+            apns: file.apns,
         },
         key,
     )

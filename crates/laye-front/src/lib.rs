@@ -13,11 +13,13 @@
 
 pub mod a2a_card;
 pub mod a2a_spoken;
+pub mod apns;
 pub mod collected;
 pub mod devices;
 pub mod door;
 pub mod etcd;
 pub mod invitations;
+pub mod island;
 mod issuer;
 pub mod jwt;
 mod mail;
@@ -97,6 +99,8 @@ pub struct Config {
     /// Where laye's wasm is, for laye's own page: laye-web. None is beside
     /// the binary, at ../share/laye/web.
     pub web: Option<PathBuf>,
+    /// Apple, for laye's own island. None starts nothing on a phone.
+    pub apns: Option<apns::ApnsAt>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -175,6 +179,8 @@ struct Inner {
     web: Option<PathBuf>,
     /// Journeys home from mycelia's door, and the sessions held for it.
     journeys: mycelia_door::Journeys,
+    /// laye's sender to Apple, for its island.
+    apns: Option<apns::Apns>,
 }
 
 /// laye, listening in front of QNTX. The handle runs it; abort it to stop.
@@ -223,7 +229,15 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
             .ok()
             .and_then(|exe| Some(exe.parent()?.parent()?.join("share/laye/web")))
     });
+    let apns = match config.apns.clone() {
+        Some(at) => Some(
+            apns::Apns::new(at)
+                .map_err(|why| laye_peer::error("apns", "laye does not reach Apple", why))?,
+        ),
+        None => None,
+    };
     let inner = Arc::new(Inner {
+        apns,
         passkeys,
         web,
         config,
@@ -267,6 +281,13 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                 _ = tick.tick() => {
                     hand_over(&inner).await;
                     ticks += 1;
+                    // "laye should get it's own island as well"
+                    if ticks.is_multiple_of(15) && let (Some(keys), Some(apns)) = (&inner.passkeys, &inner.apns) {
+                        let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
+                        for why in island::show(&held, apns, now()).await {
+                            eprintln!("laye-front: what waits was not shown on the island as it stands: {why}");
+                        }
+                    }
                     if ticks.is_multiple_of(60) && let Some(keys) = &inner.passkeys {
                         let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
                         for why in held.deliver_due(now()).await {
@@ -629,6 +650,37 @@ async fn as_person(
             };
             let (status, body) = act_on(&held, &person, &level, Some(act), body).await;
             return Some(json(code(status), body.to_string()));
+        }
+        "/laye/island/phone" if post => {
+            // The tokens Apple gave laye's app, handed in the person's session.
+            let (person, _) = match collecting_for(inner, parts) {
+                Ok(who) => who,
+                Err(why) => {
+                    return Some(json(
+                        StatusCode::UNAUTHORIZED,
+                        serde_json::json!({ "error": why }).to_string(),
+                    ));
+                }
+            };
+            let handed = match serde_json::from_slice::<island::Handed>(body) {
+                Ok(handed) => handed,
+                Err(e) => {
+                    return Some(said(
+                        StatusCode::BAD_REQUEST,
+                        format!(
+                            "a phone's token is {{\"token\", \"waits\", \"phone\", \"gone\"}}: {e}"
+                        ),
+                    ));
+                }
+            };
+            let held = collected::Collections {
+                etcd: &keys.etcd,
+                laye: &inner.did,
+            };
+            return Some(match island::keep(&held, &person, &handed).await {
+                Ok(()) => json(StatusCode::OK, String::from("{}")),
+                Err(why) => said(StatusCode::BAD_REQUEST, why),
+            });
         }
         "/laye/collected" | "/laye/collected/act" => {
             // "and as a human i can dial it"
