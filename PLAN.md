@@ -28,6 +28,10 @@ Of what was said on 2026-11-22:
 
 "YOU, not me, but YOU, its DECIDED, WE WANT THIS"
 
+"but why am i not the one to admit, through ag ?"
+
+"ok, just note it, and do it manuyally for now, but what we want of course is for ag to be handling these kinds of session specific things."
+
 The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [x] `P2P2A2A_A_004_01` What is collected reaches the person as it changes, not on the next time they ask.
@@ -47,6 +51,9 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 
 - [ ] `P2P2A2A_A_004_06` A mycelia restart costs no finger: what ag was paired with outlives mycelia, and is still given to nothing but a press in ag.
   Proof: mycelia is installed again; the next press in each session's ag asks no finger; a process that is not ag asking mycelia's socket is still refused.
+
+- [ ] `P2P2A2A_A_004_07` What is particular to one session is the person's to do in ag, in their session: admitting an agent laye does not know is one. A release to an agent not admitted at laye shows on its line in ag as a press to admit it; the press admits it in the person's session, and the release goes on. A key admits sessions as ground does now, and is never the only way.
+  Proof: a session whose key laye has not admitted is said to; releasing it in ag offers to admit it; one press admits it and the other session receives what was said. On 2026-11-22 Window was admitted by hand instead (`/auth/admit` signed by the key the person said yes to), because there was no such press.
 
 ## P2P2A2A_002 Laye in front of QNTX
 
