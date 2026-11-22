@@ -127,6 +127,12 @@ in
       dir = "app";
       inherit tag;
       profile = (builtins.fromJSON (builtins.readFile ../app/apple.json)).profile;
+      # "laye should get it's own island as well"
+      # What waits at laye stands on laye's own island, and a press asks laye.
+      island = {
+        node = "https://laye.ground.institute";
+        sentry = "\${{ vars.ISLAND_SENTRY_DSN }}";
+      };
       targets = [ "wasm32-unknown-unknown" ];
       cache = {
         path = [
