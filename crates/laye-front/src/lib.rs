@@ -656,7 +656,7 @@ async fn as_person(
                 etcd: &keys.etcd,
                 laye: &inner.did,
             };
-            let (status, body) = act_on(&held, &person, &level, Some(act), body).await;
+            let (status, body) = act_on(inner, &held, &person, &level, Some(act), body).await;
             return Some(json(code(status), body.to_string()));
         }
         "/api/phones" if post => {
@@ -712,7 +712,7 @@ async fn as_person(
             let (status, body) = if path == "/laye/collected" && get {
                 collected_for(&held, &person, &level).await
             } else if path == "/laye/collected/act" && post {
-                act_on(&held, &person, &level, None, body).await
+                act_on(inner, &held, &person, &level, None, body).await
             } else {
                 return None;
             };
@@ -785,6 +785,96 @@ async fn collected_for(
     (200, serde_json::json!({ "collected": seen }))
 }
 
+/// Where laye asks QNTX, the primary, to write an approved reach line on a peer.
+const REACH_ON_PEER: &str = "/auth/laye/reach";
+
+/// "i dont want to do it. i am pleasing begging for it to be via ag and live activity via laye"
+///
+/// Writes each reach line among what is released, as the person who
+/// released it, through the primary. Each one written says so in what is
+/// delivered; one that is not stops the release, with why.
+async fn reach_approved(
+    inner: &Inner,
+    held: &collected::Collections<'_>,
+    did: &str,
+    ids: &[String],
+    person: &str,
+) -> Result<(), String> {
+    let all = held.all().await?;
+    let Some(waits) = all.into_iter().find(|c| c.did == did) else {
+        return Ok(());
+    };
+    for one in waits.waiting {
+        let Some(reach) = one.reach.as_ref() else {
+            continue;
+        };
+        if !ids.is_empty() && !ids.contains(&one.id) {
+            continue;
+        }
+        let t = now();
+        let signed = jwt::sign(
+            &inner.key,
+            &jwt::Claims {
+                iss: inner.did.clone(),
+                sub: inner.did.clone(),
+                aud: vec![inner.config.qntx_did.clone()],
+                exp: t + 60,
+                iat: t,
+                jti: jwt::fresh_jti(),
+                label: "laye".into(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let asked = serde_json::json!({
+            "person": person, "peer": reach.peer, "path": reach.path, "to": reach.to,
+        });
+        let req = Request::post(format!("{}{REACH_ON_PEER}", inner.config.qntx))
+            .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(asked.to_string())))
+            .map_err(|e| e.to_string())?;
+        let resp = inner
+            .client
+            .request(req)
+            .await
+            .map_err(|e| format!("QNTX did not answer: {e}"))?;
+        let status = resp.status();
+        let answered = resp
+            .into_body()
+            .collect()
+            .await
+            .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
+            .unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "{} was not written on {}: {status} {answered}",
+                reach.line(),
+                reach.peer
+            ));
+        }
+        eprintln!(
+            "laye-front: {person} approved {} on {}, and it is written",
+            reach.line(),
+            reach.peer
+        );
+        held.act(
+            did,
+            &collected::Act::Edit {
+                id: one.id.clone(),
+                says: format!(
+                    "{person} approved, and it is written on {}: {}",
+                    reach.peer,
+                    reach.line()
+                ),
+            },
+            person,
+            now(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// What a person does with what waits for an agent.
 const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
 
@@ -793,6 +883,7 @@ const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
 /// An act the path names stands for the body's, and `to` for `did`, as ag
 /// asks the node (QNTX server/collected.go).
 async fn act_on(
+    inner: &Inner,
     held: &collected::Collections<'_>,
     person: &str,
     level: &str,
@@ -848,6 +939,13 @@ async fn act_on(
             );
         }
     };
+    // A reach line asked for is written before what waits is released: the
+    // asker hears that it was written, or nothing is released.
+    if let collected::Act::Release { ids, .. } = &act
+        && let Err(why) = reach_approved(inner, held, &asked.did, ids, person).await
+    {
+        return refused(502, why);
+    }
     match held.act(&asked.did, &act, person, now()).await {
         Ok(after) => (200, serde_json::json!(after)),
         Err(why) => refused(409, why),
@@ -1594,6 +1692,57 @@ async fn as_collections(
                     &from,
                     &says.join("\n"),
                     &context,
+                    now(),
+                )
+                .await
+            {
+                Ok(task) => Some(json(
+                    StatusCode::OK,
+                    serde_json::json!({ "task": task_json(&task) }).to_string(),
+                )),
+                Err(why) => failed(why),
+            };
+        }
+        if post && rest == "ask/reach" {
+            // An agent asks the person to write a reach line on a node: it
+            // waits in the asker's own collection until the person answers.
+            #[derive(Deserialize)]
+            struct Asked {
+                peer: String,
+                path: String,
+                to: String,
+                #[serde(default)]
+                why: String,
+            }
+            let Ok(asked) = serde_json::from_slice::<Asked>(body) else {
+                return Some(said(
+                    StatusCode::BAD_REQUEST,
+                    "a reach line asked for is {\"peer\", \"path\", \"to\", \"why\"}",
+                ));
+            };
+            let (did, called) = match named(&keys.etcd, name).await {
+                Ok(Some(held)) => held,
+                Ok(None) => return None,
+                Err(why) => return failed(why),
+            };
+            if did != subject {
+                return Some(said(
+                    StatusCode::FORBIDDEN,
+                    format!("{name} asks for itself, and this is signed by {subject}"),
+                ));
+            }
+            let reach = collected::Reach {
+                peer: asked.peer,
+                path: asked.path,
+                to: asked.to,
+            };
+            return match held
+                .ask_reach(
+                    &did,
+                    &called,
+                    &reach,
+                    &asked.why,
+                    &a2a::new_context_id(),
                     now(),
                 )
                 .await

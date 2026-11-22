@@ -52,6 +52,28 @@ pub struct Said {
     /// kept (wire.rs): what is delivered is `says`, and this is the record.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub as_said: String,
+    /// A reach line the agent asks the person to write on a node. Approved,
+    /// laye has the node's primary write it as the person (lib.rs, reach_approved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Reach>,
+}
+
+/// "i dont want to do it. i am pleasing begging for it to be via ag and live activity via laye"
+///
+/// A reach line asked for, on a peer of the primary: `REACH is '<path>' of <to>`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Reach {
+    /// The peer, by the name the primary gives it (nodes.peers).
+    pub peer: String,
+    pub path: String,
+    pub to: String,
+}
+
+impl Reach {
+    /// The line, as it reads.
+    pub fn line(&self) -> String {
+        format!("REACH is '{}' of {}", self.path, self.to)
+    }
 }
 
 /// What waits for one agent, as `collected list` says it.
@@ -272,6 +294,7 @@ impl Collections<'_> {
                 edited: false,
                 from_did: from_did.into(),
                 as_said: as_said.clone(),
+                reach: None,
             });
             held.settle();
             let tasked = Tasked {
@@ -289,6 +312,45 @@ impl Collections<'_> {
             ];
             if self.etcd.txn(&[(&key, revision)], ops).await? {
                 return Ok(tasked);
+            }
+        }
+        Err(format!("what waits for {called} kept changing under laye"))
+    }
+
+    /// Collects a reach line `from_did` asks the person to write: it waits
+    /// in the asker's own collection, and its answer reaches the asker.
+    pub async fn ask_reach(
+        &self,
+        did: &str,
+        called: &str,
+        reach: &Reach,
+        why: &str,
+        context: &str,
+        now: u64,
+    ) -> Result<Tasked, String> {
+        let says = format!(
+            "{called} asks you to write on {}: {}. {why}",
+            reach.peer,
+            reach.line()
+        );
+        let task = self
+            .collect(did, called, did, called, says.trim(), context, now)
+            .await?;
+        for _ in 0..TRIES {
+            let (mut held, revision) = self.read(did).await?;
+            let Some(one) = held.waiting.iter_mut().find(|s| s.task == task.id) else {
+                return Err(format!("what {called} asked was not found once collected"));
+            };
+            one.reach = Some(reach.clone());
+            if self
+                .etcd
+                .txn(
+                    &[(&self.key(did), revision)],
+                    vec![Op::Put(self.key(did), to_json(&held)?)],
+                )
+                .await?
+            {
+                return Ok(task);
             }
         }
         Err(format!("what waits for {called} kept changing under laye"))
