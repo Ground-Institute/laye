@@ -24,6 +24,7 @@ mod mail;
 pub mod mycelia_door;
 pub mod names;
 pub mod passkeys;
+pub mod watched;
 
 pub use issuer::Node;
 
@@ -1106,7 +1107,42 @@ fn said(status: StatusCode, words: impl Into<String>) -> Response<Body> {
     resp
 }
 
-async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Response<Body> {
+/// What is collected for the person asking, pushed as it changes, at laye's
+/// own names; None for anything else.
+fn watch_collected(
+    inner: &Arc<Inner>,
+    parts: &hyper::http::request::Parts,
+) -> Option<Response<Body>> {
+    let keys = inner.passkeys.as_ref()?;
+    let host = host_of(parts);
+    let ours =
+        named_by(&inner.config.issuer, host) || keys.at.origins.iter().any(|o| named_by(o, host));
+    if !ours || parts.method != hyper::Method::GET || parts.uri.path() != "/laye/collected/watch" {
+        return None;
+    }
+    let (person, level) = match collecting_for(inner, parts) {
+        Ok(who) => who,
+        Err(why) => {
+            return Some(json(
+                StatusCode::UNAUTHORIZED,
+                serde_json::json!({ "error": why }).to_string(),
+            ));
+        }
+    };
+    let mut resp = Response::new(watched::watch(inner.clone(), person, level).boxed());
+    let headers = resp.headers_mut();
+    headers.insert(
+        hyper::header::CONTENT_TYPE,
+        hyper::header::HeaderValue::from_static("text/event-stream"),
+    );
+    headers.insert(
+        hyper::header::CACHE_CONTROL,
+        hyper::header::HeaderValue::from_static("no-store"),
+    );
+    Some(resp)
+}
+
+async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> Response<Body> {
     // A request asking to upgrade (QNTX's page's WebSocket) is carried
     // through once both sides have switched.
     let upgrading = req
@@ -1114,6 +1150,9 @@ async fn answer(inner: &Inner, mut req: Request<hyper::body::Incoming>) -> Respo
         .contains_key(hyper::header::UPGRADE)
         .then(|| hyper::upgrade::on(&mut req));
     let (parts, body) = req.into_parts();
+    if let Some(watching) = watch_collected(inner, &parts) {
+        return watching;
+    }
     let body = match body.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
