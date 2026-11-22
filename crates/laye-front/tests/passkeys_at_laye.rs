@@ -1007,6 +1007,146 @@ async fn one_session_says_to_another_through_laye_and_it_arrives() {
     assert_eq!(row.body["items"], json!([]), "{}", row.text);
 }
 
+/// The next event a watch says, within `within`.
+async fn next_event(
+    body: &mut hyper::body::Incoming,
+    within: Duration,
+) -> Result<serde_json::Value, String> {
+    let deadline = tokio::time::Instant::now() + within;
+    let mut said = String::new();
+    loop {
+        if let Some((event, rest)) = said.split_once("\n\n") {
+            let event = event.to_string();
+            said = rest.to_string();
+            if let Some(data) = event.strip_prefix("data: ") {
+                return serde_json::from_str(data).map_err(|e| format!("{data}: {e}"));
+            }
+            continue;
+        }
+        let frame = tokio::time::timeout_at(deadline, body.frame())
+            .await
+            .map_err(|elapsed| {
+                format!("no event within {within:?} ({elapsed}); said so far {said:?}")
+            })?
+            .ok_or("the watch ended")?
+            .map_err(|e| e.to_string())?;
+        if let Some(data) = frame.data_ref() {
+            said.push_str(&String::from_utf8_lossy(data));
+        }
+    }
+}
+
+/// "i see, so it's workable now, but isn't spectacular to demo or be a daily driver, this is very much an early prototype of the core idea."
+///
+/// A person watching what is collected is told what an agent said as it is
+/// said, and not on the next time they ask.
+#[tokio::test(flavor = "multi_thread")]
+async fn what_an_agent_says_is_pushed_to_the_person_watching() {
+    let etcd = etcd("pushed").await;
+    let browser = laye_me::fresh();
+    let front = laye("pushed-q", &etcd.at, vec![did(&browser)], Vec::new()).await;
+    let mut passkey = Authenticator::new();
+    assert_eq!(
+        enrol(front, AT_RP, &browser, &[], &passkey).await.status,
+        200
+    );
+    let session = sign_in(front, AT_RP, &mut passkey).await.cookie.unwrap();
+    let qntx_key = laye_me::fresh();
+    let asked = form(
+        front,
+        "/laye/device",
+        "",
+        &format!("label=laptop&did={}", did(&qntx_key).replace(':', "%3A")),
+    )
+    .await;
+    let yes = json!({ "user_code": asked.body["user_code"] }).to_string();
+    let said_yes = ask(front, RP, "POST", "/laye/device/approve", &session, &yes)
+        .await
+        .unwrap();
+    assert_eq!(said_yes.status, 200, "{}", said_yes.text);
+    let (alder, birch) = (laye_me::fresh(), laye_me::fresh());
+    for (key, name) in [(&alder, "Alder"), (&birch, "Birch")] {
+        let admitted = form(
+            front,
+            "/auth/admit",
+            &signed(&qntx_key),
+            &format!("did={}&label={name}", did(key).replace(':', "%3A")),
+        )
+        .await;
+        assert_eq!(admitted.status, 200, "{}", admitted.text);
+        let named = signed_ask(
+            front,
+            "POST",
+            "/i/name",
+            key,
+            &json!({ "name": name, "given": "itself" }).to_string(),
+        )
+        .await;
+        assert_eq!(named.status, 200, "{}", named.text);
+    }
+
+    // Nobody's key watches: only the person's session.
+    let by_key = signed_get(front, "/laye/collected/watch", &qntx_key).await;
+    assert_ne!(by_key.status, 200, "{}", by_key.text);
+
+    let stream = tokio::net::TcpStream::connect(front).await.unwrap();
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .unwrap();
+    tokio::spawn(conn);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/laye/collected/watch")
+        .header("host", RP)
+        .header("cookie", &session)
+        .body(Full::new(Bytes::new()))
+        .unwrap();
+    let resp = sender.send_request(req).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(resp.headers()["content-type"], "text/event-stream");
+    let mut body = resp.into_body();
+
+    // Nothing waits yet: said at once.
+    let first = next_event(&mut body, Duration::from_secs(2)).await.unwrap();
+    assert_eq!(first["collected"], json!([]), "{first}");
+
+    // Alder says something to Birch: the person is told within a moment.
+    let send = json!({
+        "message": { "messageId": "ground-say-1", "role": "ROLE_USER", "parts": [{ "text": "the tide is in" }] },
+        "configuration": { "returnImmediately": true },
+    });
+    let sent = signed_ask(
+        front,
+        "POST",
+        "/a2a/Birch/message:send",
+        &alder,
+        &send.to_string(),
+    )
+    .await;
+    assert_eq!(sent.status, 200, "{}", sent.text);
+    let told = next_event(&mut body, Duration::from_secs(2)).await.unwrap();
+    assert_eq!(told["collected"][0]["to"], "Birch", "{told}");
+    assert_eq!(
+        told["collected"][0]["waiting"][0]["says"], "the tide is in",
+        "{told}"
+    );
+
+    // Released: told that nothing waits any more.
+    let released = ask(
+        front,
+        RP,
+        "POST",
+        "/laye/collected/act",
+        &session,
+        &json!({ "did": did(&birch), "act": "release" }).to_string(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(released.status, 200, "{}", released.text);
+    let after = next_event(&mut body, Duration::from_secs(2)).await.unwrap();
+    assert_eq!(after["collected"], json!([]), "{after}");
+}
+
 /// A person is shown by their name and photo, as the provider showed them,
 /// and laye takes those only with a binding that is that person's.
 #[tokio::test(flavor = "multi_thread")]

@@ -184,6 +184,38 @@ impl Etcd {
         Ok(answer.get("succeeded").and_then(Value::as_bool) == Some(true))
     }
 
+    /// A watch of every key under `prefix`, from now: etcd's answer as it
+    /// streams, a message for each change. `fresh` asks for a new token, as a
+    /// watch refused for its token ends with no status to say so.
+    pub async fn watch(&self, prefix: &str, fresh: bool) -> Result<hyper::body::Incoming, String> {
+        let mut end = prefix.as_bytes().to_vec();
+        if let Some(last) = end.last_mut() {
+            *last = last.saturating_add(1);
+        }
+        let body = json!({
+            "create_request": { "key": B64.encode(prefix), "range_end": B64.encode(end) }
+        });
+        let token = self.token(fresh).await?;
+        let url = format!("{}/v3/watch", self.at);
+        let mut request =
+            Request::post(&url).header(hyper::header::CONTENT_TYPE, "application/json");
+        if let Some(token) = token {
+            request = request.header(hyper::header::AUTHORIZATION, token);
+        }
+        let request = request
+            .body(Full::new(Bytes::from(body.to_string())))
+            .map_err(|e| e.to_string())?;
+        let response = self
+            .client
+            .request(request)
+            .await
+            .map_err(|e| format!("etcd at {} did not answer: {e}", self.at))?;
+        if !response.status().is_success() {
+            return Err(format!("etcd at {url} answered {}", response.status()));
+        }
+        Ok(response.into_body())
+    }
+
     async fn ask(&self, path: &str, body: Value) -> Result<Value, String> {
         let token = self.token(false).await?;
         match self.post(path, &body, token.as_deref()).await {
