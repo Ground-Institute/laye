@@ -25,6 +25,7 @@ pub mod mycelia_door;
 pub mod names;
 pub mod passkeys;
 pub mod watched;
+pub mod wire;
 
 pub use issuer::Node;
 

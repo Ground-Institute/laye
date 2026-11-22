@@ -48,6 +48,10 @@ pub struct Said {
     pub id: String,
     pub edited: bool,
     pub from_did: String,
+    /// What the agent said, where laye took something out of it before it was
+    /// kept (wire.rs): what is delivered is `says`, and this is the record.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub as_said: String,
 }
 
 /// What waits for one agent, as `collected list` says it.
@@ -249,18 +253,25 @@ impl Collections<'_> {
         now: u64,
     ) -> Result<Tasked, String> {
         let task = task_id();
+        let as_itself = crate::wire::as_itself(says);
+        let as_said = if as_itself == says {
+            String::new()
+        } else {
+            says.to_string()
+        };
         for _ in 0..TRIES {
             let (mut held, revision) = self.read(did).await?;
             held.to = called.into();
             held.did = did.into();
             held.waiting.push(Said {
                 from: from.into(),
-                says: says.into(),
+                says: as_itself.clone(),
                 at: stamp(now),
                 task: task.clone(),
                 id: fresh_id(),
                 edited: false,
                 from_did: from_did.into(),
+                as_said: as_said.clone(),
             });
             held.settle();
             let tasked = Tasked {
