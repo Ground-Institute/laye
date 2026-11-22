@@ -629,12 +629,20 @@ async fn as_person(
         // "ag's presses go to laye"
         // 「[Opus 5.5] A press as ag makes it at the node, /api/collected/<act> with」
         // 「[Opus 5.5] {"to", ...}, is made here at /laye/collected/<act>.」
+        // A press on laye's island asks under /api/, as every island's press
+        // does (ios-common island/app/WaitsNode.swift): the same act.
         _ if post
             && path
+                .strip_prefix("/api")
+                .unwrap_or(path)
                 .strip_prefix("/laye/collected/")
                 .is_some_and(|act| ACTS.contains(&act)) =>
         {
-            let act = path.strip_prefix("/laye/collected/").unwrap_or_default();
+            let act = path
+                .strip_prefix("/api")
+                .unwrap_or(path)
+                .strip_prefix("/laye/collected/")
+                .unwrap_or_default();
             let (person, level) = match collecting_for(inner, parts) {
                 Ok(who) => who,
                 Err(why) => {
@@ -651,8 +659,9 @@ async fn as_person(
             let (status, body) = act_on(&held, &person, &level, Some(act), body).await;
             return Some(json(code(status), body.to_string()));
         }
-        "/laye/island/phone" if post => {
-            // The tokens Apple gave laye's app, handed in the person's session.
+        "/api/phones" if post => {
+            // The tokens Apple gave laye's app, handed in the person's session,
+            // where every island hands them (ios-common island/app/WaitsTokens.swift).
             let (person, _) = match collecting_for(inner, parts) {
                 Ok(who) => who,
                 Err(why) => {

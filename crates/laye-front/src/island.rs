@@ -26,8 +26,9 @@ pub const STARTED: &str = "/island/started/";
 /// The one Live Activity type of laye's app.
 pub const TYPE: &str = "WaitsAttributes";
 
-/// Where a press on the island acts (lib.rs, /laye/collected/act).
-pub const ACT: &str = "/laye/collected/act";
+/// Where a press on the island acts, under /api/ as every island's press asks
+/// (lib.rs, /api/laye/collected/<act>).
+pub const ACT: &str = "/api/laye/collected/";
 
 /// What `waits` names a collection by.
 pub fn waits_of(did: &str) -> String {
@@ -124,8 +125,8 @@ pub fn shown(c: &Collected) -> serde_json::Value {
     }
     let press = |says: &str, does: &str, then: &str, act: &str, armed: bool| {
         serde_json::json!({
-            "says": says, "does": does, "then": then, "path": ACT,
-            "sent": { "to": c.did, "act": act }, "armed": armed,
+            "says": says, "does": does, "then": then, "path": format!("{ACT}{act}"),
+            "sent": { "to": c.did }, "armed": armed,
         })
     };
     serde_json::json!({
@@ -354,15 +355,22 @@ mod tests {
         assert_eq!(state["says"], "1 waits");
         assert_eq!(state["preview"], "ChatGPT: said 0");
         let presses = state["presses"].as_array().unwrap();
-        let acts: Vec<_> = presses
+        let paths: Vec<_> = presses
             .iter()
-            .map(|p| p["sent"]["act"].as_str().unwrap())
+            .map(|p| p["path"].as_str().unwrap())
             .collect();
-        assert_eq!(acts, ["release", "later", "cancel"]);
+        assert_eq!(
+            paths,
+            [
+                "/api/laye/collected/release",
+                "/api/laye/collected/later",
+                "/api/laye/collected/cancel"
+            ]
+        );
         assert!(
             presses
                 .iter()
-                .all(|p| p["path"] == ACT && p["sent"]["to"] == "did:key:zCumulus")
+                .all(|p| p["sent"]["to"] == "did:key:zCumulus")
         );
     }
 
