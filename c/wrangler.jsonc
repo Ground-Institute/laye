@@ -14,9 +14,9 @@
   // SQLite-backed, the kind of Durable Object the free plan has.
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Peer"] }],
   // c.sbvh.nl, a custom hostname of the ground.institute zone (q.sbvh.nl's
-  // infra/route53.tf points it there). workers.dev stays until every dial names c.sbvh.nl.
+  // infra/route53.tf points it there), and nowhere else: q, k and l dial c.sbvh.nl.
   "routes": [{ "pattern": "c.sbvh.nl/*", "zone_name": "ground.institute" }],
-  "workers_dev": true,
+  "workers_dev": false,
   "vars": {
     // Where a browser's laye dials C.
     "LISTEN": "/dns4/c.sbvh.nl/tcp/443/wss",
