@@ -284,6 +284,12 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                 _ = tick.tick() => {
                     hand_over(&inner).await;
                     ticks += 1;
+                    // What was released for QNTX's own agent goes to QNTX.
+                    if ticks.is_multiple_of(5) && let Some(keys) = &inner.passkeys {
+                        for why in hand_to_node(&inner, &keys.etcd).await {
+                            eprintln!("laye-front: what was released for QNTX's agent was not handed to QNTX: {why}");
+                        }
+                    }
                     // "laye should get it's own island as well"
                     if ticks.is_multiple_of(15) && let (Some(keys), Some(apns)) = (&inner.passkeys, &inner.apns) {
                         let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
@@ -824,6 +830,99 @@ async fn collected_for(
         }
     }
     (200, serde_json::json!({ "collected": seen }))
+}
+
+/// Where laye hands QNTX what a person released, or what came due, for
+/// QNTX's own agent (QNTX server/auth/laye_delivered.go).
+const DELIVERED_TO_NODE: &str = "/auth/laye/delivered";
+
+/// laye's signature for one request to QNTX.
+fn signed_for_qntx(inner: &Inner) -> Result<String, String> {
+    let t = now();
+    jwt::sign(
+        &inner.key,
+        &jwt::Claims {
+            iss: inner.did.clone(),
+            sub: inner.did.clone(),
+            aud: vec![inner.config.qntx_did.clone()],
+            exp: t + 60,
+            iat: t,
+            jti: jwt::fresh_jti(),
+            label: "laye".into(),
+        },
+    )
+    .map(|signed| format!("Signed {signed}"))
+    .map_err(|e| e.to_string())
+}
+
+/// "yeah, because right now, i dont even see the outgoing towards node agent in ag right? yeah thats fucked up as well"
+///
+/// Each delivery of what was collected for QNTX's own agent, handed to QNTX,
+/// which runs it as the agent's turn; once QNTX took it, it is gone from the
+/// news. What QNTX did not take stays, and is handed again. Why each one was
+/// not handed.
+async fn hand_to_node(inner: &Inner, etcd: &etcd::Etcd) -> Vec<String> {
+    let all = match etcd.under(collected::NEWS).await {
+        Ok(all) => all,
+        Err(why) => return vec![why],
+    };
+    let mut failed = Vec::new();
+    for (key, kv) in all {
+        let Ok(news) = serde_json::from_slice::<collected::News>(&kv.value) else {
+            continue;
+        };
+        if !news.node {
+            continue;
+        }
+        let signed = match signed_for_qntx(inner) {
+            Ok(signed) => signed,
+            Err(why) => {
+                failed.push(why);
+                continue;
+            }
+        };
+        let body = serde_json::json!({
+            "did": news.did, "to": news.to, "from": news.from, "says": news.note, "tasks": news.tasks,
+        });
+        let Ok(req) = Request::post(format!("{}{DELIVERED_TO_NODE}", inner.config.qntx))
+            .header(hyper::header::AUTHORIZATION, signed)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(body.to_string())))
+        else {
+            failed.push(format!("the delivery to {} was not made", news.to));
+            continue;
+        };
+        let resp = match inner.client.request(req).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                failed.push(format!("{}: QNTX did not answer: {e}", news.to));
+                continue;
+            }
+        };
+        let status = resp.status();
+        let answered = resp
+            .into_body()
+            .collect()
+            .await
+            .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
+            .unwrap_or_default();
+        if !status.is_success() {
+            failed.push(format!("{}: QNTX answered {status} {answered}", news.to));
+            continue;
+        }
+        if let Err(why) = etcd.txn(&[], vec![etcd::Op::Delete(key.clone())]).await {
+            failed.push(format!(
+                "{} was handed to QNTX and {key} stays: {why}",
+                news.to
+            ));
+            continue;
+        }
+        eprintln!(
+            "laye-front: what was released for {} is handed to QNTX: {answered}",
+            news.to
+        );
+    }
+    failed
 }
 
 /// Where laye asks QNTX, the primary, to write an approved reach line on a peer.
@@ -1810,6 +1909,19 @@ pub const CONNECTOR_SAID: &str = "/laye/collected/said";
 struct ConnectorSaid {
     /// The name it was said to.
     to: String,
+    /// The key of who it was said to, where QNTX names it: its Node Agent's,
+    /// whose name is the node's to give.
+    #[serde(default)]
+    to_did: String,
+    /// The person who sees what waits for QNTX's own agent.
+    #[serde(default)]
+    person: String,
+    /// Said to QNTX's own agent: what is released goes to QNTX (hand_to_node).
+    #[serde(default)]
+    node: bool,
+    /// Wakes nobody (QNTX collectedSaid.Quiet).
+    #[serde(default)]
+    quiet: bool,
     /// The connector's own key.
     from_did: String,
     /// Who it is, as QNTX names it.
@@ -1840,7 +1952,12 @@ async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) 
             );
         }
     };
-    let (did, called) = match named(&keys.etcd, &asked.to).await {
+    let named_at = if asked.to_did.is_empty() {
+        named(&keys.etcd, &asked.to).await
+    } else {
+        Ok(Some((asked.to_did.clone(), asked.to.clone())))
+    };
+    let (did, called) = match named_at {
         Ok(Some(held)) => held,
         Ok(None) => {
             return said(
@@ -1863,6 +1980,11 @@ async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) 
             &asked.from,
             &asked.says,
             &context,
+            &collected::Whose {
+                person: asked.person.clone(),
+                node: asked.node,
+                quiet: asked.quiet,
+            },
             now(),
         )
         .await
@@ -1934,6 +2056,7 @@ async fn as_collections(
                     &from,
                     &says.join("\n"),
                     &context,
+                    &collected::Whose::default(),
                     now(),
                 )
                 .await

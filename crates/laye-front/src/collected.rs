@@ -60,6 +60,10 @@ pub struct Said {
     /// node's primary admit it as the person (lib.rs, reach_approved).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admit: Option<Admit>,
+    /// What wakes nobody: it makes nothing due, and goes with the next
+    /// delivery (QNTX collectedSaid.Quiet, a delivery of GitHub's).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
 }
 
 impl Said {
@@ -164,6 +168,19 @@ pub struct Collected {
     /// still waits on the person it stands for.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub person: String,
+    /// What waits for an agent the node itself runs, its Node Agent: what is
+    /// released goes to the node, which runs it as the agent's turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub node: bool,
+}
+
+/// Whose a collected thing is, past who it is for: the person who sees it,
+/// whether the node runs the agent, and whether it wakes it.
+#[derive(Clone, Debug, Default)]
+pub struct Whose {
+    pub person: String,
+    pub node: bool,
+    pub quiet: bool,
 }
 
 /// A Task laye answered with, and where it is.
@@ -194,6 +211,9 @@ pub struct News {
     /// The Tasks of what it delivers, completed when it is received.
     pub tasks: Vec<String>,
     pub until: u64,
+    /// For the node's own agent: laye hands it to the node (lib.rs, hand_to_node).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub node: bool,
 }
 
 pub fn stamp(at: u64) -> String {
@@ -238,7 +258,8 @@ impl Collected {
     /// `due`: the wait after the first of it, no sooner than the wait after the
     /// last delivery, and no sooner than a person held it to.
     fn due_at(&self) -> u64 {
-        let Some(first) = self.waiting.first() else {
+        // What wakes nobody makes nothing due.
+        let Some(first) = self.waiting.iter().find(|s| !s.quiet) else {
             return 0;
         };
         let mut due = secs(&first.at) + WAIT;
@@ -346,6 +367,7 @@ impl Collections<'_> {
         from: &str,
         says: &str,
         context: &str,
+        whose: &Whose,
         now: u64,
     ) -> Result<Tasked, String> {
         let task = task_id();
@@ -370,7 +392,12 @@ impl Collections<'_> {
                 as_said: as_said.clone(),
                 reach: None,
                 admit: None,
+                quiet: whose.quiet,
             });
+            if !whose.person.is_empty() {
+                held.person = whose.person.clone();
+            }
+            held.node |= whose.node;
             held.settle();
             let tasked = Tasked {
                 id: task.clone(),
@@ -430,6 +457,7 @@ impl Collections<'_> {
                     Ask::Admit(a) => Some(a.clone()),
                     Ask::Reach(_) => None,
                 },
+                quiet: false,
             });
             held.settle();
             let key = self.key(asker_did);
@@ -549,7 +577,13 @@ impl Collections<'_> {
         by: &str,
         now: u64,
     ) -> Result<Vec<Op>, String> {
-        let person = self.person_of_agent(&held.did).await?;
+        // The node's own agent is the person's the node named; any other is
+        // the person its key speaks for.
+        let person = if held.node && !held.person.is_empty() {
+            held.person.clone()
+        } else {
+            self.person_of_agent(&held.did).await?
+        };
         // A tmux range carries an item's id on the row, and holds 15 bytes
         // (QNTX statusline rangeLimit): longer, it comes back naming nothing.
         let id = format!("l{}", fresh_id().get(..14).unwrap_or_default());
@@ -567,6 +601,7 @@ impl Collections<'_> {
                 .filter(|t| !t.is_empty())
                 .collect(),
             until: now + ON_THE_ROW,
+            node: held.node,
         };
         let mut ops = vec![Op::Put(format!("{NEWS}{id}"), to_json(&news)?)];
         for one in going {
@@ -813,6 +848,7 @@ fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod asks {
     use super::*;
 
