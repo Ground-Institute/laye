@@ -80,6 +80,7 @@ async fn the_first_part_of_a_stream_arrives_while_qntx_still_streams() {
             passkeys: None,
             web: None,
             apns: None,
+            pack_nodes: Vec::new(),
         },
         laye_me::fresh(),
     )

@@ -102,6 +102,7 @@ async fn a_websocket_goes_through_laye_and_qntx_is_told_whose_it_is() {
             passkeys: None,
             web: None,
             apns: None,
+            pack_nodes: Vec::new(),
         },
         laye_key.clone(),
     )

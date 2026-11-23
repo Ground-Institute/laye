@@ -101,6 +101,9 @@ pub struct Config {
     pub web: Option<PathBuf>,
     /// Apple, for laye's own island. None starts nothing on a phone.
     pub apns: Option<apns::ApnsAt>,
+    /// The nodes, beside QNTX in front of which laye stands, that hand laye
+    /// the reach a refused request lacked, by their did:key.
+    pub pack_nodes: Vec<String>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -1395,6 +1398,18 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
         return connector_said(inner, keys, &body).await;
     }
 
+    // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
+    // A node that refused a request for reach hands laye what it lacked,
+    // signed as itself: it waits in the person's pack.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && (subject == inner.config.qntx_did
+            || inner.config.pack_nodes.iter().any(|n| n == subject))
+        && parts.method == hyper::Method::POST
+        && parts.uri.path() == REACH_LACKED
+    {
+        return reach_lacked(inner, keys, subject, &body).await;
+    }
+
     // What an agent says to an agent, its Task, and the row it is delivered
     // on are laye's when it keeps passkeys: QNTX up or not.
     if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
@@ -1560,6 +1575,97 @@ fn task_json(t: &collected::Tasked) -> serde_json::Value {
     })
 }
 
+/// Where a node hands the reach a refused request lacked (QNTX server/out_of_reach.go).
+pub const REACH_LACKED: &str = "/laye/pack/reach";
+
+/// The reach a refused request lacked, as the node that refused it says.
+#[derive(Deserialize)]
+struct Lacked {
+    node_did: String,
+    #[serde(default)]
+    node: String,
+    path: String,
+    to: String,
+    asker_did: String,
+    #[serde(default)]
+    asker: String,
+    person: String,
+}
+
+/// Puts what a refused request lacked into its person's pack.
+async fn reach_lacked(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    signer: &str,
+    body: &Bytes,
+) -> Response<Body> {
+    let lacked = match serde_json::from_slice::<Lacked>(body) {
+        Ok(l)
+            if !l.path.is_empty()
+                && !l.to.is_empty()
+                && !l.asker_did.is_empty()
+                && !l.person.is_empty() =>
+        {
+            l
+        }
+        Ok(_) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                "path, to, asker_did and person are each named",
+            );
+        }
+        Err(e) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                format!("not what a refusal lacked: {e}"),
+            );
+        }
+    };
+    // A node speaks for its own refusals, and no other node's.
+    if lacked.node_did != signer {
+        return said(
+            StatusCode::FORBIDDEN,
+            format!("{signer} hands what {} refused", lacked.node_did),
+        );
+    }
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let node = if lacked.node.is_empty() {
+        lacked.node_did.clone()
+    } else {
+        lacked.node
+    };
+    let asker = if lacked.asker.is_empty() {
+        lacked.asker_did.clone()
+    } else {
+        lacked.asker
+    };
+    let reach = collected::Reach {
+        peer: lacked.node_did,
+        path: lacked.path,
+        to: lacked.to,
+    };
+    match held
+        .lacked(
+            &reach,
+            &node,
+            &lacked.asker_did,
+            &asker,
+            &lacked.person,
+            now(),
+        )
+        .await
+    {
+        Ok(put) => json(
+            StatusCode::OK,
+            serde_json::json!({ "put": put }).to_string(),
+        ),
+        Err(why) => said(StatusCode::SERVICE_UNAVAILABLE, why),
+    }
+}
+
 /// Where QNTX hands what a person's connector said to a name.
 pub const CONNECTOR_SAID: &str = "/laye/collected/said";
 
@@ -1692,57 +1798,6 @@ async fn as_collections(
                     &from,
                     &says.join("\n"),
                     &context,
-                    now(),
-                )
-                .await
-            {
-                Ok(task) => Some(json(
-                    StatusCode::OK,
-                    serde_json::json!({ "task": task_json(&task) }).to_string(),
-                )),
-                Err(why) => failed(why),
-            };
-        }
-        if post && rest == "ask/reach" {
-            // An agent asks the person to write a reach line on a node: it
-            // waits in the asker's own collection until the person answers.
-            #[derive(Deserialize)]
-            struct Asked {
-                peer: String,
-                path: String,
-                to: String,
-                #[serde(default)]
-                why: String,
-            }
-            let Ok(asked) = serde_json::from_slice::<Asked>(body) else {
-                return Some(said(
-                    StatusCode::BAD_REQUEST,
-                    "a reach line asked for is {\"peer\", \"path\", \"to\", \"why\"}",
-                ));
-            };
-            let (did, called) = match named(&keys.etcd, name).await {
-                Ok(Some(held)) => held,
-                Ok(None) => return None,
-                Err(why) => return failed(why),
-            };
-            if did != subject {
-                return Some(said(
-                    StatusCode::FORBIDDEN,
-                    format!("{name} asks for itself, and this is signed by {subject}"),
-                ));
-            }
-            let reach = collected::Reach {
-                peer: asked.peer,
-                path: asked.path,
-                to: asked.to,
-            };
-            return match held
-                .ask_reach(
-                    &did,
-                    &called,
-                    &reach,
-                    &asked.why,
-                    &a2a::new_context_id(),
                     now(),
                 )
                 .await

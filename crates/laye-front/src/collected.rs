@@ -58,12 +58,13 @@ pub struct Said {
     pub reach: Option<Reach>,
 }
 
-/// "i dont want to do it. i am pleasing begging for it to be via ag and live activity via laye"
+/// "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
 ///
-/// A reach line asked for, on a peer of the primary: `REACH is '<path>' of <to>`.
+/// The reach a refused request lacked, on the node that refused it:
+/// `REACH is '<path>' of <to>`, made from the refusal.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Reach {
-    /// The peer, by the name the primary gives it (nodes.peers).
+    /// The node that refused, by its did:key.
     pub peer: String,
     pub path: String,
     pub to: String,
@@ -90,6 +91,10 @@ pub struct Collected {
     pub failing_since: String,
     pub tries: i32,
     pub failure: String,
+    /// Whose it is, where a refusal named them: an asker laye never admitted
+    /// still waits on the person it stands for.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub person: String,
 }
 
 /// A Task laye answered with, and where it is.
@@ -317,43 +322,52 @@ impl Collections<'_> {
         Err(format!("what waits for {called} kept changing under laye"))
     }
 
-    /// Collects a reach line `from_did` asks the person to write: it waits
-    /// in the asker's own collection, and its answer reaches the asker.
-    pub async fn ask_reach(
+    /// Puts the reach a refused request lacked into its person's pack, in
+    /// the asker's own collection: once while the same line waits there.
+    /// Whether it was put.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn lacked(
         &self,
-        did: &str,
-        called: &str,
         reach: &Reach,
-        why: &str,
-        context: &str,
+        node: &str,
+        asker_did: &str,
+        asker: &str,
+        person: &str,
         now: u64,
-    ) -> Result<Tasked, String> {
-        let says = format!(
-            "{called} asks you to write on {}: {}. {why}",
-            reach.peer,
-            reach.line()
-        );
-        let task = self
-            .collect(did, called, did, called, says.trim(), context, now)
-            .await?;
+    ) -> Result<bool, String> {
         for _ in 0..TRIES {
-            let (mut held, revision) = self.read(did).await?;
-            let Some(one) = held.waiting.iter_mut().find(|s| s.task == task.id) else {
-                return Err(format!("what {called} asked was not found once collected"));
-            };
-            one.reach = Some(reach.clone());
+            let (mut held, revision) = self.read(asker_did).await?;
+            if held.waiting.iter().any(|s| s.reach.as_ref() == Some(reach)) {
+                return Ok(false);
+            }
+            held.to = asker.into();
+            held.did = asker_did.into();
+            held.person = person.into();
+            held.waiting.push(Said {
+                from: node.into(),
+                says: format!("{} on {node}, for {asker}", reach.line()),
+                at: stamp(now),
+                task: String::new(),
+                id: fresh_id(),
+                edited: false,
+                from_did: reach.peer.clone(),
+                as_said: String::new(),
+                reach: Some(reach.clone()),
+            });
+            held.settle();
+            let key = self.key(asker_did);
             if self
                 .etcd
                 .txn(
-                    &[(&self.key(did), revision)],
-                    vec![Op::Put(self.key(did), to_json(&held)?)],
+                    &[(&key, revision)],
+                    vec![Op::Put(key.clone(), to_json(&held)?)],
                 )
                 .await?
             {
-                return Ok(task);
+                return Ok(true);
             }
         }
-        Err(format!("what waits for {called} kept changing under laye"))
+        Err(format!("what waits for {asker} kept changing under laye"))
     }
 
     /// Everything laye collected.
@@ -573,6 +587,12 @@ impl Collections<'_> {
     /// The person an agent's key speaks for: the key that admitted it, which a
     /// person said yes to.
     pub async fn person_of_agent(&self, did: &str) -> Result<String, String> {
+        if let Ok((held, revision)) = self.read(did).await
+            && revision > 0
+            && !held.person.is_empty()
+        {
+            return Ok(held.person);
+        }
         let admitted = self
             .etcd
             .get(&format!("/admitted/{did}"))
