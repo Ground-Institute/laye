@@ -293,7 +293,7 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                     // "laye should get it's own island as well"
                     if ticks.is_multiple_of(15) && let (Some(keys), Some(apns)) = (&inner.passkeys, &inner.apns) {
                         let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
-                        for why in island::show(&held, apns, now()).await {
+                        for why in island::show(&held, apns, &inner.config.root_identities, now()).await {
                             eprintln!("laye-front: what waits was not shown on the island as it stands: {why}");
                         }
                     }

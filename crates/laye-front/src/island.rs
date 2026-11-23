@@ -170,7 +170,23 @@ pub fn mark(shown: &serde_json::Value) -> String {
 /// Makes what stands on each phone what waits at laye now: started where it
 /// does not stand, moved where it changed, ended where nothing waits.
 /// Every failure is said.
-pub async fn show(held: &Collections<'_>, apns: &Apns, now: u64) -> Vec<String> {
+/// "they are all me."
+///
+/// Whose phones what waits stands on: every root's, as a ROOT sees whatever
+/// waits (lib.rs, theirs), and the person it waits on.
+pub fn people_shown(roots: &[String], person: Option<String>) -> Vec<String> {
+    let mut people = roots.to_vec();
+    if let Some(person) = person
+        && !people.contains(&person)
+    {
+        people.push(person);
+    }
+    people
+}
+
+/// `roots` are laye's root identities: a ROOT sees whatever waits, in ag as
+/// here (lib.rs, theirs), so what waits stands on every root's phone too.
+pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u64) -> Vec<String> {
     let mut failed = Vec::new();
     let all = match held.all().await {
         Ok(all) => all,
@@ -189,22 +205,25 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, now: u64) -> Vec<String> 
 
     // Started where it waits and does not stand.
     for c in all.iter().filter(|c| !c.waiting.is_empty()) {
-        let person = match held.person_of_agent(&c.did).await {
-            Ok(person) => person,
-            Err(_) => continue,
-        };
-        let phones = match held.etcd.under(&format!("{PHONES}{person}/")).await {
-            Ok(kvs) => kvs,
-            Err(why) => {
-                failed.push(why);
-                continue;
+        let people = people_shown(roots, held.person_of_agent(&c.did).await.ok());
+        let mut phones = Vec::new();
+        for person in &people {
+            match held.etcd.under(&format!("{PHONES}{person}/")).await {
+                Ok(kvs) => phones.extend(kvs),
+                Err(why) => failed.push(why),
             }
-        };
+        }
         let waits = waits_of(&c.did);
         for (key, _) in phones {
             let Some(phone) = key.rsplit('/').next().map(str::to_string) else {
                 continue;
             };
+            // Whose phone it is: the identity it was kept under.
+            let person = key
+                .strip_prefix(PHONES)
+                .and_then(|rest| rest.rsplit_once('/'))
+                .map(|(person, _)| person.to_string())
+                .unwrap_or_default();
             if stands
                 .iter()
                 .any(|(_, s)| s.waits == waits && s.phone == phone)
@@ -430,6 +449,18 @@ mod tests {
             .map(|p| p["says"].as_str().unwrap())
             .collect();
         assert_eq!(said, ["approve", "deny"]);
+    }
+
+    // "they are all me."
+    #[test]
+    fn what_waits_stands_on_every_roots_phone_and_its_persons() {
+        let roots = vec!["github:1739143".to_string(), "google:1101".to_string()];
+        assert_eq!(people_shown(&roots, Some("github:1739143".into())), roots);
+        assert_eq!(
+            people_shown(&roots, Some("a person a root invited".into())),
+            ["github:1739143", "google:1101", "a person a root invited"]
+        );
+        assert_eq!(people_shown(&roots, None), roots);
     }
 
     #[test]
