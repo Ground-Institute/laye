@@ -791,11 +791,14 @@ async fn collected_for(
 /// Where laye asks QNTX, the primary, to write an approved reach line on a peer.
 const REACH_ON_PEER: &str = "/auth/laye/reach";
 
+/// Where laye asks QNTX, the primary, to admit an approved key on a peer.
+const ADMIT_ON_PEER: &str = "/auth/laye/admit";
+
 /// "i dont want to do it. i am pleasing begging for it to be via ag and live activity via laye"
 ///
-/// Writes each reach line among what is released, as the person who
-/// released it, through the primary. Each one written says so in what is
-/// delivered; one that is not stops the release, with why.
+/// Writes each reach line, and admits each key, among what is released, as
+/// the person who released it, through the primary. Each one done says so in
+/// what is delivered; one that is not stops the release, with why.
 async fn reach_approved(
     inner: &Inner,
     held: &collected::Collections<'_>,
@@ -808,7 +811,25 @@ async fn reach_approved(
         return Ok(());
     };
     for one in waits.waiting {
-        let Some(reach) = one.reach.as_ref() else {
+        let (path, asked, line, peer) = if let Some(reach) = one.reach.as_ref() {
+            (
+                REACH_ON_PEER,
+                serde_json::json!({
+                    "person": person, "peer": reach.peer, "path": reach.path, "to": reach.to,
+                }),
+                reach.line(),
+                reach.peer.clone(),
+            )
+        } else if let Some(admit) = one.admit.as_ref() {
+            (
+                ADMIT_ON_PEER,
+                serde_json::json!({
+                    "person": person, "peer": admit.peer, "did": admit.did, "label": admit.label,
+                }),
+                admit.line(),
+                admit.peer.clone(),
+            )
+        } else {
             continue;
         };
         if !ids.is_empty() && !ids.contains(&one.id) {
@@ -828,10 +849,7 @@ async fn reach_approved(
             },
         )
         .map_err(|e| e.to_string())?;
-        let asked = serde_json::json!({
-            "person": person, "peer": reach.peer, "path": reach.path, "to": reach.to,
-        });
-        let req = Request::post(format!("{}{REACH_ON_PEER}", inner.config.qntx))
+        let req = Request::post(format!("{}{path}", inner.config.qntx))
             .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
             .header(hyper::header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(asked.to_string())))
@@ -850,25 +868,15 @@ async fn reach_approved(
             .unwrap_or_default();
         if !status.is_success() {
             return Err(format!(
-                "{} was not written on {}: {status} {answered}",
-                reach.line(),
-                reach.peer
+                "{line} was not done on {peer}: {status} {answered}"
             ));
         }
-        eprintln!(
-            "laye-front: {person} approved {} on {}, and it is written",
-            reach.line(),
-            reach.peer
-        );
+        eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
         held.act(
             did,
             &collected::Act::Edit {
                 id: one.id.clone(),
-                says: format!(
-                    "{person} approved, and it is written on {}: {}",
-                    reach.peer,
-                    reach.line()
-                ),
+                says: format!("{person} approved, and it is done on {peer}: {line}"),
             },
             person,
             now(),
@@ -1415,6 +1423,18 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
         return reach_lacked(inner, keys, subject, &body).await;
     }
 
+    // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    // A node that holds nothing for a key that signed for it hands laye the
+    // key, signed as itself: admitting it waits in its ROOT's pack.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && (subject == inner.config.qntx_did
+            || inner.config.pack_nodes.iter().any(|n| n == subject))
+        && parts.method == hyper::Method::POST
+        && parts.uri.path() == KEY_UNKNOWN
+    {
+        return key_unknown(inner, keys, subject, &body).await;
+    }
+
     // What an agent says to an agent, its Task, and the row it is delivered
     // on are laye's when it keeps passkeys: QNTX up or not.
     if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
@@ -1647,11 +1667,11 @@ async fn reach_lacked(
     } else {
         lacked.asker
     };
-    let reach = collected::Reach {
+    let reach = collected::Ask::Reach(collected::Reach {
         peer: lacked.node_did,
         path: lacked.path,
         to: lacked.to,
-    };
+    });
     match held
         .lacked(
             &reach,
@@ -1661,6 +1681,76 @@ async fn reach_lacked(
             &lacked.person,
             now(),
         )
+        .await
+    {
+        Ok(put) => json(
+            StatusCode::OK,
+            serde_json::json!({ "put": put }).to_string(),
+        ),
+        Err(why) => said(StatusCode::SERVICE_UNAVAILABLE, why),
+    }
+}
+
+/// Where a node hands a key it holds nothing for (QNTX server/unknown_key.go).
+pub const KEY_UNKNOWN: &str = "/laye/pack/admit";
+
+/// A key a node holds nothing for, as the node says.
+#[derive(Deserialize)]
+struct Unknown {
+    node_did: String,
+    #[serde(default)]
+    node: String,
+    did: String,
+    #[serde(default)]
+    label: String,
+    person: String,
+}
+
+/// Puts admitting a key into its node's ROOT's pack.
+async fn key_unknown(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    signer: &str,
+    body: &Bytes,
+) -> Response<Body> {
+    let unknown = match serde_json::from_slice::<Unknown>(body) {
+        Ok(u) if !u.did.is_empty() && !u.person.is_empty() => u,
+        Ok(_) => return said(StatusCode::BAD_REQUEST, "did and person are each named"),
+        Err(e) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                format!("not a key a node holds nothing for: {e}"),
+            );
+        }
+    };
+    // A node speaks for its own keys, and no other node's.
+    if unknown.node_did != signer {
+        return said(
+            StatusCode::FORBIDDEN,
+            format!("{signer} hands what {} holds nothing for", unknown.node_did),
+        );
+    }
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let node = if unknown.node.is_empty() {
+        unknown.node_did.clone()
+    } else {
+        unknown.node
+    };
+    let asker = if unknown.label.is_empty() {
+        unknown.did.clone()
+    } else {
+        unknown.label.clone()
+    };
+    let admit = collected::Ask::Admit(collected::Admit {
+        peer: unknown.node_did,
+        did: unknown.did.clone(),
+        label: unknown.label,
+    });
+    match held
+        .lacked(&admit, &node, &unknown.did, &asker, &unknown.person, now())
         .await
     {
         Ok(put) => json(

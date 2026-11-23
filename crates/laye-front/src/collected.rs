@@ -56,6 +56,17 @@ pub struct Said {
     /// laye has the node's primary write it as the person (lib.rs, reach_approved).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reach: Option<Reach>,
+    /// A key the node holds nothing for, to admit. Approved, laye has the
+    /// node's primary admit it as the person (lib.rs, reach_approved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admit: Option<Admit>,
+}
+
+impl Said {
+    /// Whether this waits on the person's approve or deny, the thing itself.
+    pub fn approval(&self) -> bool {
+        self.reach.is_some() || self.admit.is_some()
+    }
 }
 
 /// "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
@@ -74,6 +85,64 @@ impl Reach {
     /// The line, as it reads.
     pub fn line(&self) -> String {
         format!("REACH is '{}' of {}", self.path, self.to)
+    }
+}
+
+/// "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+/// "yeah, it jus tfeels like this should happen for sure"
+///
+/// A key that signed as itself for a node that holds nothing for it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Admit {
+    /// The node that holds nothing for it, by its did:key.
+    pub peer: String,
+    /// The key, by its did:key.
+    pub did: String,
+    /// What it calls itself.
+    pub label: String,
+}
+
+impl Admit {
+    /// What admitting it reads as.
+    pub fn line(&self) -> String {
+        if self.label.is_empty() {
+            format!("admit the key {}", self.did)
+        } else {
+            format!("admit {}'s key {}", self.label, self.did)
+        }
+    }
+}
+
+/// What a node asks its person to approve.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ask {
+    Reach(Reach),
+    Admit(Admit),
+}
+
+impl Ask {
+    /// What it reads as.
+    pub fn line(&self) -> String {
+        match self {
+            Ask::Reach(r) => r.line(),
+            Ask::Admit(a) => a.line(),
+        }
+    }
+
+    /// The node that asks it.
+    fn peer(&self) -> &str {
+        match self {
+            Ask::Reach(r) => &r.peer,
+            Ask::Admit(a) => &a.peer,
+        }
+    }
+
+    /// Whether said is this very ask, waiting.
+    fn waits_in(&self, said: &Said) -> bool {
+        match self {
+            Ask::Reach(r) => said.reach.as_ref() == Some(r),
+            Ask::Admit(a) => said.admit.as_ref() == Some(a),
+        }
     }
 }
 
@@ -300,6 +369,7 @@ impl Collections<'_> {
                 from_did: from_did.into(),
                 as_said: as_said.clone(),
                 reach: None,
+                admit: None,
             });
             held.settle();
             let tasked = Tasked {
@@ -322,13 +392,13 @@ impl Collections<'_> {
         Err(format!("what waits for {called} kept changing under laye"))
     }
 
-    /// Puts the reach a refused request lacked into its person's pack, in
-    /// the asker's own collection: once while the same line waits there.
-    /// Whether it was put.
+    /// Puts what a node asks its person to approve into their pack, in the
+    /// asker's own collection: once while the same ask waits there. Whether
+    /// it was put.
     #[allow(clippy::too_many_arguments)]
     pub async fn lacked(
         &self,
-        reach: &Reach,
+        ask: &Ask,
         node: &str,
         asker_did: &str,
         asker: &str,
@@ -337,7 +407,7 @@ impl Collections<'_> {
     ) -> Result<bool, String> {
         for _ in 0..TRIES {
             let (mut held, revision) = self.read(asker_did).await?;
-            if held.waiting.iter().any(|s| s.reach.as_ref() == Some(reach)) {
+            if held.waiting.iter().any(|s| ask.waits_in(s)) {
                 return Ok(false);
             }
             held.to = asker.into();
@@ -345,14 +415,21 @@ impl Collections<'_> {
             held.person = person.into();
             held.waiting.push(Said {
                 from: node.into(),
-                says: format!("{} on {node}, for {asker}", reach.line()),
+                says: format!("{} on {node}, for {asker}", ask.line()),
                 at: stamp(now),
                 task: String::new(),
                 id: fresh_id(),
                 edited: false,
-                from_did: reach.peer.clone(),
+                from_did: ask.peer().into(),
                 as_said: String::new(),
-                reach: Some(reach.clone()),
+                reach: match ask {
+                    Ask::Reach(r) => Some(r.clone()),
+                    Ask::Admit(_) => None,
+                },
+                admit: match ask {
+                    Ask::Admit(a) => Some(a.clone()),
+                    Ask::Reach(_) => None,
+                },
             });
             held.settle();
             let key = self.key(asker_did);
@@ -539,12 +616,12 @@ impl Collections<'_> {
             if due == 0 || now < due {
                 continue;
             }
-            // A reach line asked for waits on the person's answer, and is
-            // never released for being due: what goes is the rest.
+            // An approval waits on the person's answer, and is never
+            // released for being due: what goes is the rest.
             let ids: Vec<String> = held
                 .waiting
                 .iter()
-                .filter(|s| s.reach.is_none())
+                .filter(|s| !s.approval())
                 .map(|s| s.id.clone())
                 .collect();
             if ids.is_empty() {
@@ -733,4 +810,30 @@ impl Collections<'_> {
 
 fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod asks {
+    use super::*;
+
+    // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    #[test]
+    fn a_key_to_admit_reads_as_itself_and_waits_on_the_person() {
+        let admit = Admit {
+            peer: "did:key:zK".into(),
+            did: "did:key:zRamen".into(),
+            label: "ramen".into(),
+        };
+        assert_eq!(admit.line(), "admit ramen's key did:key:zRamen");
+        let said = Said {
+            admit: Some(admit.clone()),
+            ..Said::default()
+        };
+        assert!(said.approval());
+        assert!(Ask::Admit(admit.clone()).waits_in(&said));
+        assert!(!Said::default().approval());
+        // It is kept as itself, and read back so.
+        let kept: Said = serde_json::from_str(&serde_json::to_string(&said).unwrap()).unwrap();
+        assert_eq!(kept.admit, Some(admit));
+    }
 }

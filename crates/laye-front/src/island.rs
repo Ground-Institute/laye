@@ -131,7 +131,7 @@ pub fn shown(c: &Collected) -> serde_json::Value {
     };
     // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
     // What waits is approvals alone: approve or deny, the thing itself.
-    if !c.waiting.is_empty() && c.waiting.iter().all(|s| s.reach.is_some()) {
+    if !c.waiting.is_empty() && c.waiting.iter().all(|s| s.approval()) {
         let says = if n == 1 {
             "1 to approve".to_string()
         } else {
@@ -411,6 +411,25 @@ mod tests {
         assert_eq!(said, ["approve", "deny"]);
         assert_eq!(presses[0]["path"], "/api/laye/collected/release");
         assert_eq!(presses[1]["path"], "/api/laye/collected/cancel");
+    }
+
+    // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    #[test]
+    fn a_key_to_admit_is_approved_or_denied_on_the_island() {
+        let mut c = waiting(1);
+        c.waiting[0].admit = Some(crate::collected::Admit {
+            peer: "did:key:zK".into(),
+            did: "did:key:zRamen".into(),
+            label: "ramen".into(),
+        });
+        let state = shown(&c);
+        assert_eq!(state["says"], "1 to approve");
+        let presses = state["presses"].as_array().unwrap();
+        let said: Vec<_> = presses
+            .iter()
+            .map(|p| p["says"].as_str().unwrap())
+            .collect();
+        assert_eq!(said, ["approve", "deny"]);
     }
 
     #[test]
