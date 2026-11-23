@@ -921,8 +921,13 @@ async fn act_on(
     }
     let says = asked.says.filter(|s| !s.trim().is_empty());
     let act = match named.unwrap_or(asked.act.as_str()) {
+        // One thing approved by its id, as ag and the island press it.
         "release" => collected::Act::Release {
-            ids: asked.ids,
+            ids: if asked.ids.is_empty() {
+                asked.id.clone().into_iter().collect()
+            } else {
+                asked.ids
+            },
             says,
         },
         "later" => collected::Act::Later,

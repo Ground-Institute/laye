@@ -129,6 +129,25 @@ pub fn shown(c: &Collected) -> serde_json::Value {
             "sent": { "to": c.did }, "armed": armed,
         })
     };
+    // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
+    // What waits is approvals alone: approve or deny, the thing itself.
+    if !c.waiting.is_empty() && c.waiting.iter().all(|s| s.reach.is_some()) {
+        let says = if n == 1 {
+            "1 to approve".to_string()
+        } else {
+            format!("{n} to approve")
+        };
+        return serde_json::json!({
+            "says": says,
+            "preview": lines.join("\n"),
+            "due": 0.0,
+            "segments": [],
+            "presses": [
+                press("approve", "approve", "approved", "release", false),
+                press("deny", "cancel", "denied", "cancel", true),
+            ],
+        });
+    }
     serde_json::json!({
         "says": says,
         "preview": lines.join("\n"),
@@ -372,6 +391,26 @@ mod tests {
                 .iter()
                 .all(|p| p["sent"]["to"] == "did:key:zCumulus")
         );
+    }
+
+    #[test]
+    fn what_a_refusal_lacked_is_approved_or_denied_on_the_island() {
+        let mut c = waiting(1);
+        c.waiting[0].reach = Some(crate::collected::Reach {
+            peer: "did:key:zK".into(),
+            path: "lines:scene".into(),
+            to: "TOKEN".into(),
+        });
+        let state = shown(&c);
+        assert_eq!(state["says"], "1 to approve");
+        let presses = state["presses"].as_array().unwrap();
+        let said: Vec<_> = presses
+            .iter()
+            .map(|p| p["says"].as_str().unwrap())
+            .collect();
+        assert_eq!(said, ["approve", "deny"]);
+        assert_eq!(presses[0]["path"], "/api/laye/collected/release");
+        assert_eq!(presses[1]["path"], "/api/laye/collected/cancel");
     }
 
     #[test]
