@@ -525,10 +525,18 @@ impl Collections<'_> {
             if due == 0 || now < due {
                 continue;
             }
-            let release = Act::Release {
-                ids: Vec::new(),
-                says: None,
-            };
+            // A reach line asked for waits on the person's answer, and is
+            // never released for being due: what goes is the rest.
+            let ids: Vec<String> = held
+                .waiting
+                .iter()
+                .filter(|s| s.reach.is_none())
+                .map(|s| s.id.clone())
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+            let release = Act::Release { ids, says: None };
             if let Err(why) = self
                 .act(&held.did, &release, "laye, as it was due", now)
                 .await
