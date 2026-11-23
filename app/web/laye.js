@@ -112,6 +112,34 @@ async function prove(provider, host) {
   await cameBack(back);
 }
 
+// "So laye has its own island?"
+// "I havent seen it yet."
+// The island asks laye in the session this page holds, under the key the app
+// names (apple.json island.session; ios-common island/app/WaitsNode.swift).
+// laye gives one for this key and the account it is bound to, as it lets them
+// log in; it lasts an hour, so it is asked for again while the page stands.
+const SESSION = 'session';
+const SESSION_AGAIN = 30 * 60 * 1000;
+
+async function hold() {
+  const held = await proven();
+  if (!held) {
+    try { localStorage.removeItem(SESSION); } catch { /* kept nowhere */ }
+    return;
+  }
+  const self = await me();
+  const { challenge } = await (await ask(LAYE + '/laye/challenge')).json();
+  const signature = new Uint8Array(await crypto.subtle.sign('Ed25519', self.pair.privateKey, new TextEncoder().encode(challenge)));
+  const answer = await ask(LAYE + '/laye/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ did: self.did, signature: b64url(signature), challenge, bindings: [held.binding] }),
+  });
+  const body = await answer.json();
+  if (!answer.ok) { said('laye gave no session: ' + (body.error_description || body.error || answer.status), true); return; }
+  localStorage.setItem(SESSION, body.session);
+}
+
 async function cameBack(url) {
   const ticket = new URL(url).searchParams.get('ceremony');
   if (!ticket) return;
@@ -122,6 +150,7 @@ async function cameBack(url) {
   await write('held', 'binding', { binding, name, picture });
   said('');
   await drawn();
+  await hold();
 }
 
 // A node's journey, handed over by its login page: laye's challenge answered
@@ -181,6 +210,7 @@ async function draw() {
     document.getElementById('account').textContent = held.name ? claim.canonical_id ?? '' : (await me()).did;
     shown.push(press('forget this account', true, async () => {
       await write('held', 'binding', undefined);
+      await hold();
       await drawn();
     }));
     presses.replaceChildren(...shown);
@@ -203,6 +233,8 @@ async function draw() {
 async function begin() {
   if (!('subtle' in crypto)) { said('This device cannot make a key here.', true); return; }
   await drawn();
+  hold().catch((e) => said(String(e), true));
+  setInterval(() => hold().catch((e) => said(String(e), true)), SESSION_AGAIN);
   const deepLink = tauri?.deepLink;
   if (!deepLink) return;
   for (const url of (await deepLink.getCurrent()) ?? []) await arrived(url);

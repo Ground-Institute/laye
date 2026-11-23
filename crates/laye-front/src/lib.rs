@@ -389,8 +389,14 @@ fn collecting_for(
         .get(hyper::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
+    // A bearer is mycelia's door ticket, or the session laye's app holds and
+    // its island presents (APP_SESSION).
     match bearer {
-        Some(token) => mycelia_door::person_of(token.trim(), &inner.did, now()),
+        Some(token) => mycelia_door::person_of(token.trim(), &inner.did, now()).or_else(|door| {
+            passkeys::person_of(token.trim(), &inner.did, now())
+                .map(|(person, level, _)| (person, level))
+                .map_err(|session| format!("{door}; {session}"))
+        }),
         None => person_asking(inner, parts),
     }
 }
@@ -450,6 +456,38 @@ async fn as_person(
             session: None,
         },
         "/laye/me" if get => return Some(person_page(inner)),
+        // "So laye has its own island?"
+        // "I havent seen it yet."
+        // laye's app proves who it is with its key and the account it is
+        // bound to, as at /laye/login, and holds the session it is given
+        // where the island reads one (ios-common island/app/WaitsNode.swift).
+        APP_SESSION if post => {
+            let (_, person, level) = match laye_of(inner).proven(body) {
+                Ok(proven) => proven,
+                Err((status, _, text)) => {
+                    return Some(json(
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        text,
+                    ));
+                }
+            };
+            let t = now();
+            match passkeys::session_of(&person, level, &inner.did, &inner.key, t) {
+                Ok(token) => passkeys::Answer {
+                    status: 200,
+                    body: serde_json::json!({
+                        "person": person, "level": level, "session": token,
+                        "until": t + passkeys::SESSION_LIFE,
+                    }),
+                    session: Some(token),
+                },
+                Err(why) => passkeys::Answer {
+                    status: 500,
+                    body: serde_json::json!({ "error": format!("the session was not signed: {why}") }),
+                    session: None,
+                },
+            }
+        }
         "/laye/challenge" if get => {
             let (status, _, text) = laye_of(inner).challenge();
             return Some(json(
@@ -1599,6 +1637,9 @@ fn task_json(t: &collected::Tasked) -> serde_json::Value {
         },
     })
 }
+
+/// Where laye's app is given a session for its key (app/web/laye.js).
+pub const APP_SESSION: &str = "/laye/session";
 
 /// Where a node hands the reach a refused request lacked (QNTX server/out_of_reach.go).
 pub const REACH_LACKED: &str = "/laye/pack/reach";

@@ -679,16 +679,28 @@ fn session_for(kept: &Passkey, laye: &str, key: &Keypair, now: u64, how: &str) -
 
 /// A person's session: laye's signature naming them, for laye, short-lived.
 fn session(kept: &Passkey, laye: &str, key: &Keypair, now: u64) -> Result<String, String> {
+    session_of(&kept.person, &kept.level, laye, key, now)
+}
+
+/// A session for person at level: what a passkey's yes gets, and what laye's
+/// app gets for its key and the account it is bound to (lib.rs, APP_SESSION).
+pub fn session_of(
+    person: &str,
+    level: &str,
+    laye: &str,
+    key: &Keypair,
+    now: u64,
+) -> Result<String, String> {
     jwt::sign(
         key,
         &jwt::Claims {
             iss: laye.to_string(),
-            sub: kept.person.clone(),
+            sub: person.to_string(),
             aud: vec![SESSION_AUD.into()],
             exp: now + SESSION_LIFE,
             iat: now,
             jti: jwt::fresh_jti(),
-            label: kept.level.clone(),
+            label: level.to_string(),
         },
     )
     .map_err(|e| e.to_string())
