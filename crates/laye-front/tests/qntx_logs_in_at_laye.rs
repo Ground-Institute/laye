@@ -56,6 +56,7 @@ async fn laye(name: &str, root: &laye_me::Keypair, node: &laye_me::Keypair) -> S
             passkeys: None,
             web: None,
             apns: None,
+            pack_nodes: Vec::new(),
             root_identities: vec![did(root)],
             binding_signers: Vec::new(),
             issuer: ISSUER.into(),

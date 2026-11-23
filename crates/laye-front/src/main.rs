@@ -29,6 +29,8 @@ struct File {
     web: Option<std::path::PathBuf>,
     #[serde(default)]
     apns: Option<laye_front::apns::ApnsAt>,
+    #[serde(default)]
+    pack_nodes: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -104,6 +106,7 @@ async fn main() {
             passkeys: file.passkeys,
             web: file.web,
             apns: file.apns,
+            pack_nodes: file.pack_nodes,
         },
         key,
     )

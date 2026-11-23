@@ -128,6 +128,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         passkeys: None,
         web: None,
         apns: None,
+        pack_nodes: Vec::new(),
     }
 }
 

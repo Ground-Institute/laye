@@ -101,6 +101,9 @@ pub struct Config {
     pub web: Option<PathBuf>,
     /// Apple, for laye's own island. None starts nothing on a phone.
     pub apns: Option<apns::ApnsAt>,
+    /// The nodes, beside QNTX in front of which laye stands, that hand laye
+    /// the reach a refused request lacked, by their did:key.
+    pub pack_nodes: Vec<String>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -281,10 +284,16 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                 _ = tick.tick() => {
                     hand_over(&inner).await;
                     ticks += 1;
+                    // What was released for QNTX's own agent goes to QNTX.
+                    if ticks.is_multiple_of(5) && let Some(keys) = &inner.passkeys {
+                        for why in hand_to_node(&inner, &keys.etcd).await {
+                            eprintln!("laye-front: what was released for QNTX's agent was not handed to QNTX: {why}");
+                        }
+                    }
                     // "laye should get it's own island as well"
                     if ticks.is_multiple_of(15) && let (Some(keys), Some(apns)) = (&inner.passkeys, &inner.apns) {
                         let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
-                        for why in island::show(&held, apns, now()).await {
+                        for why in island::show(&held, apns, &inner.config.root_identities, now()).await {
                             eprintln!("laye-front: what waits was not shown on the island as it stands: {why}");
                         }
                     }
@@ -386,8 +395,14 @@ fn collecting_for(
         .get(hyper::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "));
+    // A bearer is mycelia's door ticket, or the session laye's app holds and
+    // its island presents (APP_SESSION).
     match bearer {
-        Some(token) => mycelia_door::person_of(token.trim(), &inner.did, now()),
+        Some(token) => mycelia_door::person_of(token.trim(), &inner.did, now()).or_else(|door| {
+            passkeys::person_of(token.trim(), &inner.did, now())
+                .map(|(person, level, _)| (person, level))
+                .map_err(|session| format!("{door}; {session}"))
+        }),
         None => person_asking(inner, parts),
     }
 }
@@ -447,6 +462,38 @@ async fn as_person(
             session: None,
         },
         "/laye/me" if get => return Some(person_page(inner)),
+        // "So laye has its own island?"
+        // "I havent seen it yet."
+        // laye's app proves who it is with its key and the account it is
+        // bound to, as at /laye/login, and holds the session it is given
+        // where the island reads one (ios-common island/app/WaitsNode.swift).
+        APP_SESSION if post => {
+            let (_, person, level) = match laye_of(inner).proven(body) {
+                Ok(proven) => proven,
+                Err((status, _, text)) => {
+                    return Some(json(
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        text,
+                    ));
+                }
+            };
+            let t = now();
+            match passkeys::session_of(&person, level, &inner.did, &inner.key, t) {
+                Ok(token) => passkeys::Answer {
+                    status: 200,
+                    body: serde_json::json!({
+                        "person": person, "level": level, "session": token,
+                        "until": t + passkeys::SESSION_LIFE,
+                    }),
+                    session: Some(token),
+                },
+                Err(why) => passkeys::Answer {
+                    status: 500,
+                    body: serde_json::json!({ "error": format!("the session was not signed: {why}") }),
+                    session: None,
+                },
+            }
+        }
         "/laye/challenge" if get => {
             let (status, _, text) = laye_of(inner).challenge();
             return Some(json(
@@ -656,7 +703,7 @@ async fn as_person(
                 etcd: &keys.etcd,
                 laye: &inner.did,
             };
-            let (status, body) = act_on(&held, &person, &level, Some(act), body).await;
+            let (status, body) = act_on(inner, &held, &person, &level, Some(act), body).await;
             return Some(json(code(status), body.to_string()));
         }
         "/api/phones" if post => {
@@ -712,7 +759,7 @@ async fn as_person(
             let (status, body) = if path == "/laye/collected" && get {
                 collected_for(&held, &person, &level).await
             } else if path == "/laye/collected/act" && post {
-                act_on(&held, &person, &level, None, body).await
+                act_on(inner, &held, &person, &level, None, body).await
             } else {
                 return None;
             };
@@ -785,6 +832,197 @@ async fn collected_for(
     (200, serde_json::json!({ "collected": seen }))
 }
 
+/// Where laye hands QNTX what a person released, or what came due, for
+/// QNTX's own agent (QNTX server/auth/laye_delivered.go).
+const DELIVERED_TO_NODE: &str = "/auth/laye/delivered";
+
+/// laye's signature for one request to QNTX.
+fn signed_for_qntx(inner: &Inner) -> Result<String, String> {
+    let t = now();
+    jwt::sign(
+        &inner.key,
+        &jwt::Claims {
+            iss: inner.did.clone(),
+            sub: inner.did.clone(),
+            aud: vec![inner.config.qntx_did.clone()],
+            exp: t + 60,
+            iat: t,
+            jti: jwt::fresh_jti(),
+            label: "laye".into(),
+        },
+    )
+    .map(|signed| format!("Signed {signed}"))
+    .map_err(|e| e.to_string())
+}
+
+/// "yeah, because right now, i dont even see the outgoing towards node agent in ag right? yeah thats fucked up as well"
+///
+/// Each delivery of what was collected for QNTX's own agent, handed to QNTX,
+/// which runs it as the agent's turn; once QNTX took it, it is gone from the
+/// news. What QNTX did not take stays, and is handed again. Why each one was
+/// not handed.
+async fn hand_to_node(inner: &Inner, etcd: &etcd::Etcd) -> Vec<String> {
+    let all = match etcd.under(collected::NEWS).await {
+        Ok(all) => all,
+        Err(why) => return vec![why],
+    };
+    let mut failed = Vec::new();
+    for (key, kv) in all {
+        let Ok(news) = serde_json::from_slice::<collected::News>(&kv.value) else {
+            continue;
+        };
+        if !news.node {
+            continue;
+        }
+        let signed = match signed_for_qntx(inner) {
+            Ok(signed) => signed,
+            Err(why) => {
+                failed.push(why);
+                continue;
+            }
+        };
+        let body = serde_json::json!({
+            "did": news.did, "to": news.to, "from": news.from, "says": news.note, "tasks": news.tasks,
+        });
+        let Ok(req) = Request::post(format!("{}{DELIVERED_TO_NODE}", inner.config.qntx))
+            .header(hyper::header::AUTHORIZATION, signed)
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(body.to_string())))
+        else {
+            failed.push(format!("the delivery to {} was not made", news.to));
+            continue;
+        };
+        let resp = match inner.client.request(req).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                failed.push(format!("{}: QNTX did not answer: {e}", news.to));
+                continue;
+            }
+        };
+        let status = resp.status();
+        let answered = resp
+            .into_body()
+            .collect()
+            .await
+            .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
+            .unwrap_or_default();
+        if !status.is_success() {
+            failed.push(format!("{}: QNTX answered {status} {answered}", news.to));
+            continue;
+        }
+        if let Err(why) = etcd.txn(&[], vec![etcd::Op::Delete(key.clone())]).await {
+            failed.push(format!(
+                "{} was handed to QNTX and {key} stays: {why}",
+                news.to
+            ));
+            continue;
+        }
+        eprintln!(
+            "laye-front: what was released for {} is handed to QNTX: {answered}",
+            news.to
+        );
+    }
+    failed
+}
+
+/// Where laye asks QNTX, the primary, to write an approved reach line on a peer.
+const REACH_ON_PEER: &str = "/auth/laye/reach";
+
+/// Where laye asks QNTX, the primary, to admit an approved key on a peer.
+const ADMIT_ON_PEER: &str = "/auth/laye/admit";
+
+/// "i dont want to do it. i am pleasing begging for it to be via ag and live activity via laye"
+///
+/// Writes each reach line, and admits each key, among what is released, as
+/// the person who released it, through the primary. Each one done says so in
+/// what is delivered; one that is not stops the release, with why.
+async fn reach_approved(
+    inner: &Inner,
+    held: &collected::Collections<'_>,
+    did: &str,
+    ids: &[String],
+    person: &str,
+) -> Result<(), String> {
+    let all = held.all().await?;
+    let Some(waits) = all.into_iter().find(|c| c.did == did) else {
+        return Ok(());
+    };
+    for one in waits.waiting {
+        let (path, asked, line, peer) = if let Some(reach) = one.reach.as_ref() {
+            (
+                REACH_ON_PEER,
+                serde_json::json!({
+                    "person": person, "peer": reach.peer, "path": reach.path, "to": reach.to,
+                }),
+                reach.line(),
+                reach.peer.clone(),
+            )
+        } else if let Some(admit) = one.admit.as_ref() {
+            (
+                ADMIT_ON_PEER,
+                serde_json::json!({
+                    "person": person, "peer": admit.peer, "did": admit.did, "label": admit.label,
+                }),
+                admit.line(),
+                admit.peer.clone(),
+            )
+        } else {
+            continue;
+        };
+        if !ids.is_empty() && !ids.contains(&one.id) {
+            continue;
+        }
+        let t = now();
+        let signed = jwt::sign(
+            &inner.key,
+            &jwt::Claims {
+                iss: inner.did.clone(),
+                sub: inner.did.clone(),
+                aud: vec![inner.config.qntx_did.clone()],
+                exp: t + 60,
+                iat: t,
+                jti: jwt::fresh_jti(),
+                label: "laye".into(),
+            },
+        )
+        .map_err(|e| e.to_string())?;
+        let req = Request::post(format!("{}{path}", inner.config.qntx))
+            .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
+            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(asked.to_string())))
+            .map_err(|e| e.to_string())?;
+        let resp = inner
+            .client
+            .request(req)
+            .await
+            .map_err(|e| format!("QNTX did not answer: {e}"))?;
+        let status = resp.status();
+        let answered = resp
+            .into_body()
+            .collect()
+            .await
+            .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
+            .unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "{line} was not done on {peer}: {status} {answered}"
+            ));
+        }
+        eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
+        held.act(
+            did,
+            &collected::Act::Edit {
+                id: one.id.clone(),
+                says: format!("{person} approved, and it is done on {peer}: {line}"),
+            },
+            person,
+            now(),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// What a person does with what waits for an agent.
 const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
 
@@ -793,6 +1031,7 @@ const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
 /// An act the path names stands for the body's, and `to` for `did`, as ag
 /// asks the node (QNTX server/collected.go).
 async fn act_on(
+    inner: &Inner,
     held: &collected::Collections<'_>,
     person: &str,
     level: &str,
@@ -827,8 +1066,13 @@ async fn act_on(
     }
     let says = asked.says.filter(|s| !s.trim().is_empty());
     let act = match named.unwrap_or(asked.act.as_str()) {
+        // One thing approved by its id, as ag and the island press it.
         "release" => collected::Act::Release {
-            ids: asked.ids,
+            ids: if asked.ids.is_empty() {
+                asked.id.clone().into_iter().collect()
+            } else {
+                asked.ids
+            },
             says,
         },
         "later" => collected::Act::Later,
@@ -848,6 +1092,13 @@ async fn act_on(
             );
         }
     };
+    // A reach line asked for is written before what waits is released: the
+    // asker hears that it was written, or nothing is released.
+    if let collected::Act::Release { ids, .. } = &act
+        && let Err(why) = reach_approved(inner, held, &asked.did, ids, person).await
+    {
+        return refused(502, why);
+    }
     match held.act(&asked.did, &act, person, now()).await {
         Ok(after) => (200, serde_json::json!(after)),
         Err(why) => refused(409, why),
@@ -1297,6 +1548,30 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
         return connector_said(inner, keys, &body).await;
     }
 
+    // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
+    // A node that refused a request for reach hands laye what it lacked,
+    // signed as itself: it waits in the person's pack.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && (subject == inner.config.qntx_did
+            || inner.config.pack_nodes.iter().any(|n| n == subject))
+        && parts.method == hyper::Method::POST
+        && parts.uri.path() == REACH_LACKED
+    {
+        return reach_lacked(inner, keys, subject, &body).await;
+    }
+
+    // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    // A node that holds nothing for a key that signed for it hands laye the
+    // key, signed as itself: admitting it waits in its ROOT's pack.
+    if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
+        && (subject == inner.config.qntx_did
+            || inner.config.pack_nodes.iter().any(|n| n == subject))
+        && parts.method == hyper::Method::POST
+        && parts.uri.path() == KEY_UNKNOWN
+    {
+        return key_unknown(inner, keys, subject, &body).await;
+    }
+
     // What an agent says to an agent, its Task, and the row it is delivered
     // on are laye's when it keeps passkeys: QNTX up or not.
     if let (Some(keys), Some(subject)) = (&inner.passkeys, subject.as_deref())
@@ -1462,6 +1737,170 @@ fn task_json(t: &collected::Tasked) -> serde_json::Value {
     })
 }
 
+/// Where laye's app is given a session for its key (app/web/laye.js).
+pub const APP_SESSION: &str = "/laye/session";
+
+/// Where a node hands the reach a refused request lacked (QNTX server/out_of_reach.go).
+pub const REACH_LACKED: &str = "/laye/pack/reach";
+
+/// The reach a refused request lacked, as the node that refused it says.
+#[derive(Deserialize)]
+struct Lacked {
+    node_did: String,
+    #[serde(default)]
+    node: String,
+    path: String,
+    to: String,
+    asker_did: String,
+    #[serde(default)]
+    asker: String,
+    person: String,
+}
+
+/// Puts what a refused request lacked into its person's pack.
+async fn reach_lacked(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    signer: &str,
+    body: &Bytes,
+) -> Response<Body> {
+    let lacked = match serde_json::from_slice::<Lacked>(body) {
+        Ok(l)
+            if !l.path.is_empty()
+                && !l.to.is_empty()
+                && !l.asker_did.is_empty()
+                && !l.person.is_empty() =>
+        {
+            l
+        }
+        Ok(_) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                "path, to, asker_did and person are each named",
+            );
+        }
+        Err(e) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                format!("not what a refusal lacked: {e}"),
+            );
+        }
+    };
+    // A node speaks for its own refusals, and no other node's.
+    if lacked.node_did != signer {
+        return said(
+            StatusCode::FORBIDDEN,
+            format!("{signer} hands what {} refused", lacked.node_did),
+        );
+    }
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let node = if lacked.node.is_empty() {
+        lacked.node_did.clone()
+    } else {
+        lacked.node
+    };
+    let asker = if lacked.asker.is_empty() {
+        lacked.asker_did.clone()
+    } else {
+        lacked.asker
+    };
+    let reach = collected::Ask::Reach(collected::Reach {
+        peer: lacked.node_did,
+        path: lacked.path,
+        to: lacked.to,
+    });
+    match held
+        .lacked(
+            &reach,
+            &node,
+            &lacked.asker_did,
+            &asker,
+            &lacked.person,
+            now(),
+        )
+        .await
+    {
+        Ok(put) => json(
+            StatusCode::OK,
+            serde_json::json!({ "put": put }).to_string(),
+        ),
+        Err(why) => said(StatusCode::SERVICE_UNAVAILABLE, why),
+    }
+}
+
+/// Where a node hands a key it holds nothing for (QNTX server/unknown_key.go).
+pub const KEY_UNKNOWN: &str = "/laye/pack/admit";
+
+/// A key a node holds nothing for, as the node says.
+#[derive(Deserialize)]
+struct Unknown {
+    node_did: String,
+    #[serde(default)]
+    node: String,
+    did: String,
+    #[serde(default)]
+    label: String,
+    person: String,
+}
+
+/// Puts admitting a key into its node's ROOT's pack.
+async fn key_unknown(
+    inner: &Inner,
+    keys: &passkeys::Passkeys,
+    signer: &str,
+    body: &Bytes,
+) -> Response<Body> {
+    let unknown = match serde_json::from_slice::<Unknown>(body) {
+        Ok(u) if !u.did.is_empty() && !u.person.is_empty() => u,
+        Ok(_) => return said(StatusCode::BAD_REQUEST, "did and person are each named"),
+        Err(e) => {
+            return said(
+                StatusCode::BAD_REQUEST,
+                format!("not a key a node holds nothing for: {e}"),
+            );
+        }
+    };
+    // A node speaks for its own keys, and no other node's.
+    if unknown.node_did != signer {
+        return said(
+            StatusCode::FORBIDDEN,
+            format!("{signer} hands what {} holds nothing for", unknown.node_did),
+        );
+    }
+    let held = collected::Collections {
+        etcd: &keys.etcd,
+        laye: &inner.did,
+    };
+    let node = if unknown.node.is_empty() {
+        unknown.node_did.clone()
+    } else {
+        unknown.node
+    };
+    let asker = if unknown.label.is_empty() {
+        unknown.did.clone()
+    } else {
+        unknown.label.clone()
+    };
+    let admit = collected::Ask::Admit(collected::Admit {
+        peer: unknown.node_did,
+        did: unknown.did.clone(),
+        label: unknown.label,
+    });
+    match held
+        .lacked(&admit, &node, &unknown.did, &asker, &unknown.person, now())
+        .await
+    {
+        Ok(put) => json(
+            StatusCode::OK,
+            serde_json::json!({ "put": put }).to_string(),
+        ),
+        Err(why) => said(StatusCode::SERVICE_UNAVAILABLE, why),
+    }
+}
+
 /// Where QNTX hands what a person's connector said to a name.
 pub const CONNECTOR_SAID: &str = "/laye/collected/said";
 
@@ -1470,6 +1909,19 @@ pub const CONNECTOR_SAID: &str = "/laye/collected/said";
 struct ConnectorSaid {
     /// The name it was said to.
     to: String,
+    /// The key of who it was said to, where QNTX names it: its Node Agent's,
+    /// whose name is the node's to give.
+    #[serde(default)]
+    to_did: String,
+    /// The person who sees what waits for QNTX's own agent.
+    #[serde(default)]
+    person: String,
+    /// Said to QNTX's own agent: what is released goes to QNTX (hand_to_node).
+    #[serde(default)]
+    node: bool,
+    /// Wakes nobody (QNTX collectedSaid.Quiet).
+    #[serde(default)]
+    quiet: bool,
     /// The connector's own key.
     from_did: String,
     /// Who it is, as QNTX names it.
@@ -1500,7 +1952,12 @@ async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) 
             );
         }
     };
-    let (did, called) = match named(&keys.etcd, &asked.to).await {
+    let named_at = if asked.to_did.is_empty() {
+        named(&keys.etcd, &asked.to).await
+    } else {
+        Ok(Some((asked.to_did.clone(), asked.to.clone())))
+    };
+    let (did, called) = match named_at {
         Ok(Some(held)) => held,
         Ok(None) => {
             return said(
@@ -1523,6 +1980,11 @@ async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) 
             &asked.from,
             &asked.says,
             &context,
+            &collected::Whose {
+                person: asked.person.clone(),
+                node: asked.node,
+                quiet: asked.quiet,
+            },
             now(),
         )
         .await
@@ -1594,6 +2056,7 @@ async fn as_collections(
                     &from,
                     &says.join("\n"),
                     &context,
+                    &collected::Whose::default(),
                     now(),
                 )
                 .await

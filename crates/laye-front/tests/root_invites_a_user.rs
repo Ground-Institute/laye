@@ -91,6 +91,7 @@ async fn world(name: &str) -> World {
             passkeys: None,
             web: None,
             apns: None,
+            pack_nodes: Vec::new(),
         },
         laye.clone(),
     )

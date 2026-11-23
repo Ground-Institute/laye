@@ -239,18 +239,12 @@ impl Laye<'_> {
         json(200, serde_json::json!({ "challenge": challenge }))
     }
 
-    /// A login on laye's screen: the challenge laye issued, signed by a root,
-    /// and the journey the node started. Answered with where to go back to.
-    pub(crate) fn login(&self, body: &[u8]) -> Said {
-        #[derive(Deserialize)]
-        struct Journey {
-            authorize: String,
-        }
-        let (Ok(presented), Ok(journey)) = (
-            serde_json::from_slice::<door::Login>(body),
-            serde_json::from_slice::<Journey>(body),
-        ) else {
-            return refused(400, "invalid_request", "the login does not read");
+    /// Who a key is: the challenge laye issued, signed by the key, and the
+    /// account the key is bound to, a root or one a root invited. The
+    /// challenge is spent.
+    pub(crate) fn proven(&self, body: &[u8]) -> Result<(door::Login, String, &'static str), Said> {
+        let Ok(presented) = serde_json::from_slice::<door::Login>(body) else {
+            return Err(refused(400, "invalid_request", "the login does not read"));
         };
         let fresh = self
             .issued
@@ -260,15 +254,31 @@ impl Laye<'_> {
             .remove(&presented.challenge)
             .is_some_and(|until| until > self.now);
         if !fresh {
-            return refused(
+            return Err(refused(
                 401,
                 "invalid_request",
                 "laye issued no such challenge, or it is spent",
-            );
+            ));
         }
-        let (identity, level) = match self.who_logs_in(&presented) {
-            Ok(admitted) => admitted,
-            Err(why) => return refused(403, "access_denied", why),
+        match self.who_logs_in(&presented) {
+            Ok((identity, level)) => Ok((presented, identity, level)),
+            Err(why) => Err(refused(403, "access_denied", why)),
+        }
+    }
+
+    /// A login on laye's screen: the challenge laye issued, signed by a root,
+    /// and the journey the node started. Answered with where to go back to.
+    pub(crate) fn login(&self, body: &[u8]) -> Said {
+        #[derive(Deserialize)]
+        struct Journey {
+            authorize: String,
+        }
+        let Ok(journey) = serde_json::from_slice::<Journey>(body) else {
+            return refused(400, "invalid_request", "the login does not read");
+        };
+        let (presented, identity, level) = match self.proven(body) {
+            Ok(proven) => proven,
+            Err(refusal) => return refusal,
         };
         let asked = form(&journey.authorize);
         let node = match self.node_of(&asked) {

@@ -52,6 +52,102 @@ pub struct Said {
     /// kept (wire.rs): what is delivered is `says`, and this is the record.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub as_said: String,
+    /// A reach line the agent asks the person to write on a node. Approved,
+    /// laye has the node's primary write it as the person (lib.rs, reach_approved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<Reach>,
+    /// A key the node holds nothing for, to admit. Approved, laye has the
+    /// node's primary admit it as the person (lib.rs, reach_approved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admit: Option<Admit>,
+    /// What wakes nobody: it makes nothing due, and goes with the next
+    /// delivery (QNTX collectedSaid.Quiet, a delivery of GitHub's).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
+}
+
+impl Said {
+    /// Whether this waits on the person's approve or deny, the thing itself.
+    pub fn approval(&self) -> bool {
+        self.reach.is_some() || self.admit.is_some()
+    }
+}
+
+/// "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
+///
+/// The reach a refused request lacked, on the node that refused it:
+/// `REACH is '<path>' of <to>`, made from the refusal.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Reach {
+    /// The node that refused, by its did:key.
+    pub peer: String,
+    pub path: String,
+    pub to: String,
+}
+
+impl Reach {
+    /// The line, as it reads.
+    pub fn line(&self) -> String {
+        format!("REACH is '{}' of {}", self.path, self.to)
+    }
+}
+
+/// "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+/// "yeah, it jus tfeels like this should happen for sure"
+///
+/// A key that signed as itself for a node that holds nothing for it.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Admit {
+    /// The node that holds nothing for it, by its did:key.
+    pub peer: String,
+    /// The key, by its did:key.
+    pub did: String,
+    /// What it calls itself.
+    pub label: String,
+}
+
+impl Admit {
+    /// What admitting it reads as.
+    pub fn line(&self) -> String {
+        if self.label.is_empty() {
+            format!("admit the key {}", self.did)
+        } else {
+            format!("admit {}'s key {}", self.label, self.did)
+        }
+    }
+}
+
+/// What a node asks its person to approve.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Ask {
+    Reach(Reach),
+    Admit(Admit),
+}
+
+impl Ask {
+    /// What it reads as.
+    pub fn line(&self) -> String {
+        match self {
+            Ask::Reach(r) => r.line(),
+            Ask::Admit(a) => a.line(),
+        }
+    }
+
+    /// The node that asks it.
+    fn peer(&self) -> &str {
+        match self {
+            Ask::Reach(r) => &r.peer,
+            Ask::Admit(a) => &a.peer,
+        }
+    }
+
+    /// Whether said is this very ask, waiting.
+    fn waits_in(&self, said: &Said) -> bool {
+        match self {
+            Ask::Reach(r) => said.reach.as_ref() == Some(r),
+            Ask::Admit(a) => said.admit.as_ref() == Some(a),
+        }
+    }
 }
 
 /// What waits for one agent, as `collected list` says it.
@@ -68,6 +164,23 @@ pub struct Collected {
     pub failing_since: String,
     pub tries: i32,
     pub failure: String,
+    /// Whose it is, where a refusal named them: an asker laye never admitted
+    /// still waits on the person it stands for.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub person: String,
+    /// What waits for an agent the node itself runs, its Node Agent: what is
+    /// released goes to the node, which runs it as the agent's turn.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub node: bool,
+}
+
+/// Whose a collected thing is, past who it is for: the person who sees it,
+/// whether the node runs the agent, and whether it wakes it.
+#[derive(Clone, Debug, Default)]
+pub struct Whose {
+    pub person: String,
+    pub node: bool,
+    pub quiet: bool,
 }
 
 /// A Task laye answered with, and where it is.
@@ -98,6 +211,9 @@ pub struct News {
     /// The Tasks of what it delivers, completed when it is received.
     pub tasks: Vec<String>,
     pub until: u64,
+    /// For the node's own agent: laye hands it to the node (lib.rs, hand_to_node).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub node: bool,
 }
 
 pub fn stamp(at: u64) -> String {
@@ -142,7 +258,8 @@ impl Collected {
     /// `due`: the wait after the first of it, no sooner than the wait after the
     /// last delivery, and no sooner than a person held it to.
     fn due_at(&self) -> u64 {
-        let Some(first) = self.waiting.first() else {
+        // What wakes nobody makes nothing due.
+        let Some(first) = self.waiting.iter().find(|s| !s.quiet) else {
             return 0;
         };
         let mut due = secs(&first.at) + WAIT;
@@ -250,6 +367,7 @@ impl Collections<'_> {
         from: &str,
         says: &str,
         context: &str,
+        whose: &Whose,
         now: u64,
     ) -> Result<Tasked, String> {
         let task = task_id();
@@ -272,7 +390,14 @@ impl Collections<'_> {
                 edited: false,
                 from_did: from_did.into(),
                 as_said: as_said.clone(),
+                reach: None,
+                admit: None,
+                quiet: whose.quiet,
             });
+            if !whose.person.is_empty() {
+                held.person = whose.person.clone();
+            }
+            held.node |= whose.node;
             held.settle();
             let tasked = Tasked {
                 id: task.clone(),
@@ -292,6 +417,62 @@ impl Collections<'_> {
             }
         }
         Err(format!("what waits for {called} kept changing under laye"))
+    }
+
+    /// Puts what a node asks its person to approve into their pack, in the
+    /// asker's own collection: once while the same ask waits there. Whether
+    /// it was put.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn lacked(
+        &self,
+        ask: &Ask,
+        node: &str,
+        asker_did: &str,
+        asker: &str,
+        person: &str,
+        now: u64,
+    ) -> Result<bool, String> {
+        for _ in 0..TRIES {
+            let (mut held, revision) = self.read(asker_did).await?;
+            if held.waiting.iter().any(|s| ask.waits_in(s)) {
+                return Ok(false);
+            }
+            held.to = asker.into();
+            held.did = asker_did.into();
+            held.person = person.into();
+            held.waiting.push(Said {
+                from: node.into(),
+                says: format!("{} on {node}, for {asker}", ask.line()),
+                at: stamp(now),
+                task: String::new(),
+                id: fresh_id(),
+                edited: false,
+                from_did: ask.peer().into(),
+                as_said: String::new(),
+                reach: match ask {
+                    Ask::Reach(r) => Some(r.clone()),
+                    Ask::Admit(_) => None,
+                },
+                admit: match ask {
+                    Ask::Admit(a) => Some(a.clone()),
+                    Ask::Reach(_) => None,
+                },
+                quiet: false,
+            });
+            held.settle();
+            let key = self.key(asker_did);
+            if self
+                .etcd
+                .txn(
+                    &[(&key, revision)],
+                    vec![Op::Put(key.clone(), to_json(&held)?)],
+                )
+                .await?
+            {
+                return Ok(true);
+            }
+        }
+        Err(format!("what waits for {asker} kept changing under laye"))
     }
 
     /// Everything laye collected.
@@ -396,7 +577,13 @@ impl Collections<'_> {
         by: &str,
         now: u64,
     ) -> Result<Vec<Op>, String> {
-        let person = self.person_of_agent(&held.did).await?;
+        // The node's own agent is the person's the node named; any other is
+        // the person its key speaks for.
+        let person = if held.node && !held.person.is_empty() {
+            held.person.clone()
+        } else {
+            self.person_of_agent(&held.did).await?
+        };
         // A tmux range carries an item's id on the row, and holds 15 bytes
         // (QNTX statusline rangeLimit): longer, it comes back naming nothing.
         let id = format!("l{}", fresh_id().get(..14).unwrap_or_default());
@@ -414,6 +601,7 @@ impl Collections<'_> {
                 .filter(|t| !t.is_empty())
                 .collect(),
             until: now + ON_THE_ROW,
+            node: held.node,
         };
         let mut ops = vec![Op::Put(format!("{NEWS}{id}"), to_json(&news)?)];
         for one in going {
@@ -463,10 +651,18 @@ impl Collections<'_> {
             if due == 0 || now < due {
                 continue;
             }
-            let release = Act::Release {
-                ids: Vec::new(),
-                says: None,
-            };
+            // An approval waits on the person's answer, and is never
+            // released for being due: what goes is the rest.
+            let ids: Vec<String> = held
+                .waiting
+                .iter()
+                .filter(|s| !s.approval())
+                .map(|s| s.id.clone())
+                .collect();
+            if ids.is_empty() {
+                continue;
+            }
+            let release = Act::Release { ids, says: None };
             if let Err(why) = self
                 .act(&held.did, &release, "laye, as it was due", now)
                 .await
@@ -503,6 +699,12 @@ impl Collections<'_> {
     /// The person an agent's key speaks for: the key that admitted it, which a
     /// person said yes to.
     pub async fn person_of_agent(&self, did: &str) -> Result<String, String> {
+        if let Ok((held, revision)) = self.read(did).await
+            && revision > 0
+            && !held.person.is_empty()
+        {
+            return Ok(held.person);
+        }
         let admitted = self
             .etcd
             .get(&format!("/admitted/{did}"))
@@ -643,4 +845,31 @@ impl Collections<'_> {
 
 fn to_json<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     serde_json::to_vec(value).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod asks {
+    use super::*;
+
+    // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    #[test]
+    fn a_key_to_admit_reads_as_itself_and_waits_on_the_person() {
+        let admit = Admit {
+            peer: "did:key:zK".into(),
+            did: "did:key:zRamen".into(),
+            label: "ramen".into(),
+        };
+        assert_eq!(admit.line(), "admit ramen's key did:key:zRamen");
+        let said = Said {
+            admit: Some(admit.clone()),
+            ..Said::default()
+        };
+        assert!(said.approval());
+        assert!(Ask::Admit(admit.clone()).waits_in(&said));
+        assert!(!Said::default().approval());
+        // It is kept as itself, and read back so.
+        let kept: Said = serde_json::from_str(&serde_json::to_string(&said).unwrap()).unwrap();
+        assert_eq!(kept.admit, Some(admit));
+    }
 }
