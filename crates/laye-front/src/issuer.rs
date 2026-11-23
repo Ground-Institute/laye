@@ -28,7 +28,7 @@ pub struct Node {
 
 const ASSERTION: &str = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer";
 /// What QNTX takes as a token (internal/access TokenPrefix).
-const TOKEN_PREFIX: &str = "qntx_";
+pub(crate) const TOKEN_PREFIX: &str = "qntx_";
 const CHALLENGE_LIFE: u64 = 120;
 const CODE_LIFE: u64 = 60;
 const TOKEN_LIFE: u64 = 3600;
@@ -67,24 +67,24 @@ pub(crate) struct Issued {
 /// An answer: status, content type, body.
 pub(crate) type Said = (u16, &'static str, String);
 
-fn json(status: u16, value: serde_json::Value) -> Said {
+pub(crate) fn json(status: u16, value: serde_json::Value) -> Said {
     (status, "application/json", value.to_string())
 }
 
-fn refused(status: u16, error: &str, why: impl Into<String>) -> Said {
+pub(crate) fn refused(status: u16, error: &str, why: impl Into<String>) -> Said {
     json(
         status,
         serde_json::json!({ "error": error, "error_description": why.into() }),
     )
 }
 
-fn random_hex(n: usize) -> String {
+pub(crate) fn random_hex(n: usize) -> String {
     (0..n)
         .map(|_| format!("{:02x}", rand::random::<u8>()))
         .collect()
 }
 
-fn hash(s: &str) -> String {
+pub(crate) fn hash(s: &str) -> String {
     Sha256::digest(s.as_bytes())
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -101,7 +101,7 @@ pub(crate) fn form(s: &str) -> HashMap<String, String> {
         .collect()
 }
 
-fn decode(s: &str) -> String {
+pub(crate) fn decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -128,7 +128,7 @@ fn decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn encode(s: &str) -> String {
+pub(crate) fn encode(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
@@ -163,7 +163,10 @@ impl Laye<'_> {
                 "token_endpoint": format!("{}/auth/token", self.issuer),
                 "introspection_endpoint": format!("{}/auth/introspect", self.issuer),
                 "response_types_supported": ["code"],
-                "grant_types_supported": ["authorization_code"],
+                // A connector, claude.ai or ChatGPT, is handed a refresh
+                // token, and presents its secret (connectors.rs).
+                "grant_types_supported": ["authorization_code", "refresh_token"],
+                "token_endpoint_auth_methods_supported": ["private_key_jwt", "client_secret_basic", "client_secret_post"],
                 "code_challenge_methods_supported": ["S256"],
             }),
         )
@@ -214,7 +217,7 @@ impl Laye<'_> {
         self.page(None)
     }
 
-    fn page(&self, journey: Option<&str>) -> Said {
+    pub(crate) fn page(&self, journey: Option<&str>) -> Said {
         let page = include_str!("login.html")
             .replace(
                 "{{authorize}}",
@@ -313,7 +316,7 @@ impl Laye<'_> {
 
     /// The node asking is the node it says, signing as its own key for laye's
     /// token address, once.
-    fn node_asking(&self, asked: &HashMap<String, String>) -> Result<String, String> {
+    pub(crate) fn node_asking(&self, asked: &HashMap<String, String>) -> Result<String, String> {
         if asked.get("client_assertion_type").map(String::as_str) != Some(ASSERTION) {
             return Err("a node asks by signing as its did:key".into());
         }
@@ -526,25 +529,31 @@ impl Laye<'_> {
             Err(why) => return refused(401, "invalid_client", why),
         };
         let token = asked.get("token").map(String::as_str).unwrap_or_default();
+        self.held(&node, token)
+            .unwrap_or_else(|| json(200, serde_json::json!({ "active": false })))
+    }
+
+    /// Who a token laye issued a node is, to that node, while it stands.
+    pub(crate) fn held(&self, node: &str, token: &str) -> Option<Said> {
         let tokens = self.issued.tokens.lock().unwrap_or_else(|p| p.into_inner());
-        match tokens.get(&hash(token)) {
-            Some(held) if held.until > self.now && held.node == node && self.still_in(held) => {
-                json(
-                    200,
-                    serde_json::json!({
-                        "active": true,
-                        "iss": self.issuer,
-                        "sub": held.identity,
-                        "client_id": held.node,
-                        "token_type": "bearer",
-                        "level": held.level,
-                        "did": held.did,
-                        "label": "laye",
-                    }),
-                )
-            }
-            _ => json(200, serde_json::json!({ "active": false })),
+        let held = tokens.get(&hash(token))?;
+        if held.until <= self.now || held.node != node || !self.still_as(&held.identity, held.level)
+        {
+            return None;
         }
+        Some(json(
+            200,
+            serde_json::json!({
+                "active": true,
+                "iss": self.issuer,
+                "sub": held.identity,
+                "client_id": held.node,
+                "token_type": "bearer",
+                "level": held.level,
+                "did": held.did,
+                "label": "laye",
+            }),
+        ))
     }
 
     /// Who a login is: a root, or the account an invitation lets in.
@@ -561,13 +570,14 @@ impl Laye<'_> {
 
     /// A token stands only while who it is still is: a root still listed, or
     /// an invited account not kicked.
-    fn still_in(&self, held: &Token) -> bool {
-        if held.level == ROOT {
-            return self.roots.contains(&held.identity);
+    pub(crate) fn still_as(&self, identity: &str, level: &str) -> bool {
+        if level == ROOT {
+            return self.roots.iter().any(|r| r == identity);
         }
-        self.invitations.list().iter().any(|inv| {
-            inv.state() == "accepted" && inv.accepted_by.as_deref() == Some(held.identity.as_str())
-        })
+        self.invitations
+            .list()
+            .iter()
+            .any(|inv| inv.state() == "accepted" && inv.accepted_by.as_deref() == Some(identity))
     }
 
     /// A root's request about invitations: the signer is a root's own key.

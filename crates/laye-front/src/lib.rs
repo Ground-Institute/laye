@@ -15,6 +15,7 @@ pub mod a2a_card;
 pub mod a2a_spoken;
 pub mod apns;
 pub mod collected;
+mod connectors;
 pub mod devices;
 pub mod door;
 pub mod etcd;
@@ -301,6 +302,9 @@ pub async fn start(config: Config, key: Keypair) -> Result<(Front, JoinHandle<()
                         let held = collected::Collections { etcd: &keys.etcd, laye: &inner.did };
                         for why in held.deliver_due(now()).await {
                             eprintln!("laye-front: what was collected and due was not delivered: {why}");
+                        }
+                        for why in connectors::sweep(&keys.etcd, now()).await {
+                            eprintln!("laye-front: a connector's ended code or token was not swept: {why}");
                         }
                     }
                 }
@@ -1348,17 +1352,7 @@ fn as_laye(
     parts: &hyper::http::request::Parts,
     body: &[u8],
 ) -> Option<Response<Body>> {
-    let host = parts
-        .headers
-        .get(hyper::header::HOST)
-        .and_then(|h| h.to_str().ok())
-        .unwrap_or_default();
-    let ours = inner
-        .config
-        .issuer
-        .split_once("://")
-        .is_some_and(|(_, name)| name.trim_end_matches('/') == host);
-    if !ours {
+    if !at_laye(inner, parts) {
         return None;
     }
     let laye = laye_of(inner);
@@ -1390,6 +1384,25 @@ fn as_laye(
         }
         _ => return None,
     };
+    Some(answered((status, kind, text)))
+}
+
+/// Whether a request is to laye's own name.
+fn at_laye(inner: &Inner, parts: &hyper::http::request::Parts) -> bool {
+    let host = parts
+        .headers
+        .get(hyper::header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or_default();
+    inner
+        .config
+        .issuer
+        .split_once("://")
+        .is_some_and(|(_, name)| name.trim_end_matches('/') == host)
+}
+
+/// An issuer's answer, as a response.
+fn answered((status, kind, text): issuer::Said) -> Response<Body> {
     let mut resp = said(
         StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
         text,
@@ -1397,7 +1410,104 @@ fn as_laye(
     if let Ok(kind) = hyper::header::HeaderValue::from_str(kind) {
         resp.headers_mut().insert(hyper::header::CONTENT_TYPE, kind);
     }
-    Some(resp)
+    resp
+}
+
+// "BUT I WANT LAYE TO OWN IT, LAYE IS SUPPOSED TO FALL DOWN LESS EASILY THAN QNTX"
+//
+/// The connectors' authorization server, at laye's own name, in the etcd laye
+/// keeps passkeys in: a client laye issues for is answered here, and any
+/// other goes on to the node's sign-in below (as_laye).
+async fn as_connectors(
+    inner: &Inner,
+    parts: &hyper::http::request::Parts,
+    body: &Bytes,
+) -> Option<Response<Body>> {
+    let keys = inner.passkeys.as_ref()?;
+    if !at_laye(inner, parts) {
+        return None;
+    }
+    let laye = laye_of(inner);
+    let etcd = &keys.etcd;
+    let get = parts.method == hyper::Method::GET;
+    let post = parts.method == hyper::Method::POST;
+    let known = |found: Result<Option<connectors::Client>, String>| match found {
+        Ok(found) => found.map(Ok),
+        Err(why) => Some(Err(said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            format!("laye did not read its connectors: {why}"),
+        ))),
+    };
+    let answer = match parts.uri.path() {
+        "/auth/authorize" if get => {
+            let query = parts.uri.query().unwrap_or_default();
+            let asked = issuer::form(query);
+            let id = asked.get("client_id").cloned().unwrap_or_default();
+            match known(connectors::client(etcd, &id).await)? {
+                Ok(client) => connectors::authorize(&laye, &client, query),
+                Err(refused) => return Some(refused),
+            }
+        }
+        "/laye/login" if post => {
+            #[derive(Deserialize)]
+            struct Journey {
+                authorize: String,
+            }
+            let journey = serde_json::from_slice::<Journey>(body).ok()?;
+            let asked = issuer::form(&journey.authorize);
+            let id = asked.get("client_id").cloned().unwrap_or_default();
+            match known(connectors::client(etcd, &id).await)? {
+                Ok(client) => {
+                    connectors::login(&laye, etcd, &client, &journey.authorize, body).await
+                }
+                Err(refused) => return Some(refused),
+            }
+        }
+        "/auth/token" if post => {
+            let asked = issuer::form(&String::from_utf8_lossy(body));
+            let authorization = parts
+                .headers
+                .get(hyper::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok());
+            let (id, secret) = connectors::presented(authorization, &asked);
+            let client = match known(connectors::client(etcd, &id).await)? {
+                Ok(client) => client,
+                Err(refused) => return Some(refused),
+            };
+            match connectors::token(&laye, etcd, &client, &secret, &asked).await {
+                connectors::Answered::Said(answer) => answer,
+                // A refresh token QNTX issued, before laye issued for the
+                // connectors: QNTX answers it, as it did.
+                connectors::Answered::NotLayes => {
+                    let headers = passed_on(parts);
+                    return Some(
+                        match forward(
+                            inner,
+                            parts.version,
+                            &parts.method,
+                            "/auth/token",
+                            &headers,
+                            None,
+                            body.clone(),
+                        )
+                        .await
+                        {
+                            Ok(resp) => resp,
+                            Err(why) => said(
+                                StatusCode::SERVICE_UNAVAILABLE,
+                                format!(
+                                    "QNTX did not answer for the refresh token it issued: {why}"
+                                ),
+                            ),
+                        },
+                    );
+                }
+            }
+        }
+        "/auth/introspect" if post => connectors::introspect(&laye, etcd, body).await,
+        _ => return None,
+    };
+    Some(answered(answer))
 }
 
 /// The key a request is signed by, when it carries a signature: checked as a
@@ -1477,6 +1587,10 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
     };
 
     if let Some(answered) = as_person(inner, &parts, &body).await {
+        return answered;
+    }
+
+    if let Some(answered) = as_connectors(inner, &parts, &body).await {
         return answered;
     }
 
