@@ -135,9 +135,11 @@ async function hold() {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ did: self.did, signature: b64url(signature), challenge, bindings: [held.binding] }),
   });
-  const body = await answer.json();
-  if (!answer.ok) { said('laye gave no session: ' + (body.error_description || body.error || answer.status), true); return; }
-  localStorage.setItem(SESSION, body.session);
+  // What laye says is read as it came: a laye without /laye/session answers in
+  // plain text, and parsing that as JSON says only that it is not JSON.
+  const text = await answer.text();
+  if (!answer.ok) { said('laye gave no session (' + answer.status + '): ' + text, true); return; }
+  localStorage.setItem(SESSION, JSON.parse(text).session);
 }
 
 async function cameBack(url) {
