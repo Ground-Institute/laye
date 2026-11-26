@@ -1,0 +1,51 @@
+{
+  "concurrency": {
+    "cancel-in-progress": false,
+    "group": "lq"
+  },
+  "jobs": {
+    "build": {
+      "runs-on": "ubuntu-latest",
+      "steps": [
+        {
+          "uses": "actions/checkout@v5"
+        },
+        {
+          "uses": "cachix/install-nix-action@v31",
+          "with": {
+            "extra_nix_config": "experimental-features = nix-command flakes"
+          }
+        },
+        {
+          "uses": "cachix/cachix-action@v14",
+          "with": {
+            "authToken": "${{ secrets.CACHIX_AUTH_TOKEN }}",
+            "name": "qntx"
+          }
+        },
+        {
+          "name": "Build what lq runs",
+          "run": "nix build .#laye-front .#laye-peer --print-build-logs"
+        },
+        {
+          "env": {
+            "GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}"
+          },
+          "name": "Name the commit in branch-lq-stack-latest",
+          "run": "gh release delete branch-lq-stack-latest --cleanup-tag --yes 2>/dev/null || true\nprintf '%s\\n' \"$GITHUB_SHA\" > rev\ngh release create branch-lq-stack-latest rev \\\n  --prerelease \\\n  --title \"lq-stack (rolling)\" \\\n  --target \"$GITHUB_SHA\" \\\n  --notes \"What lq runs: the tip of lq-stack, $GITHUB_SHA.\"\n"
+        }
+      ]
+    }
+  },
+  "name": "lq",
+  "on": {
+    "push": {
+      "branches": [
+        "lq-stack"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "write"
+  }
+}
