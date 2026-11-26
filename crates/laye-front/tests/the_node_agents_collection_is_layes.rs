@@ -222,6 +222,7 @@ async fn what_is_released_for_the_nodes_agent_is_news_laye_hands_back() {
 
     held.act(
         LAMPLIGHTER,
+        None,
         &Act::Release {
             ids: Vec::new(),
             says: None,
@@ -287,5 +288,210 @@ async fn what_wakes_nobody_is_never_due_by_itself() {
             .waiting
             .len(),
         1
+    );
+}
+
+// "i expect in my mentalmodel to have multiple pending individual collections"
+// "two Keeper messages, i change one time and both change"
+//
+// A collection is what one agent said to one other, and its own: with its own
+// time, held and released by itself.
+
+const KEEPER: &str = "did:key:z6MkKeeper";
+const ALDER: &str = "did:key:z6MkAlder";
+const BIRCH: &str = "did:key:z6MkBirch";
+const T0: u64 = 1_795_000_000;
+
+async fn says(held: &Collections<'_>, from_did: &str, from: &str, says: &str, at: u64) {
+    held.collect(
+        KEEPER,
+        "Keeper",
+        from_did,
+        from,
+        says,
+        "c",
+        &Whose {
+            person: PERSON.into(),
+            ..Whose::default()
+        },
+        at,
+    )
+    .await
+    .unwrap();
+}
+
+async fn for_keeper(held: &Collections<'_>) -> Vec<laye_front::collected::Collected> {
+    let mut all: Vec<_> = held
+        .all()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.did == KEEPER)
+        .collect();
+    all.sort_by(|a, b| a.from.cmp(&b.from));
+    all
+}
+
+#[tokio::test]
+async fn what_two_agents_say_to_one_are_two_collections_each_with_its_own_time() {
+    let etcd = etcd("its-own").await;
+    let kv = store(&etcd.at);
+    let held = Collections {
+        etcd: &kv,
+        laye: LAYE,
+    };
+    says(&held, ALDER, "Alder", "the tide is in", T0).await;
+    says(&held, BIRCH, "Birch", "the wind is up", T0 + 600).await;
+    says(&held, ALDER, "Alder", "and going out", T0 + 900).await;
+
+    let all = for_keeper(&held).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    let (alder, birch) = (&all[0], &all[1]);
+    assert_eq!((alder.from.as_str(), alder.waiting.len()), ("Alder", 2));
+    assert_eq!((birch.from.as_str(), birch.waiting.len()), ("Birch", 1));
+    assert_ne!(alder.id, birch.id);
+    // Each is due the wait after the first of its own.
+    assert_eq!(laye_front::collected::secs(&alder.due), T0 + laye_front::collected::WAIT);
+    assert_eq!(
+        laye_front::collected::secs(&birch.due),
+        T0 + 600 + laye_front::collected::WAIT
+    );
+
+    // Held by itself: the other's time stays.
+    let until = T0 + 3 * 24 * 3600;
+    let after = held
+        .act(KEEPER, Some(&alder.id), &Act::Hold { until }, PERSON, T0 + 1000)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1);
+    let all = for_keeper(&held).await;
+    assert_eq!(laye_front::collected::secs(&all[0].due), until);
+    assert_eq!(
+        laye_front::collected::secs(&all[1].due),
+        T0 + 600 + laye_front::collected::WAIT
+    );
+}
+
+#[tokio::test]
+async fn an_act_that_names_only_the_agent_is_on_each_collection_it_is_of() {
+    let etcd = etcd("only-the-agent").await;
+    let kv = store(&etcd.at);
+    let held = Collections {
+        etcd: &kv,
+        laye: LAYE,
+    };
+    says(&held, ALDER, "Alder", "the tide is in", T0).await;
+    says(&held, BIRCH, "Birch", "the wind is up", T0 + 600).await;
+
+    // One thing by its id is where it waits, and nowhere else.
+    let all = for_keeper(&held).await;
+    let birchs = all[1].waiting[0].id.clone();
+    let edit = Act::Edit {
+        id: birchs.clone(),
+        says: "the wind dropped".into(),
+    };
+    let after = held.act(KEEPER, None, &edit, PERSON, T0 + 700).await.unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].from, "Birch");
+    assert_eq!(after[0].waiting[0].says, "the wind dropped");
+
+    // A hold that names only the agent holds everything that waits for it.
+    let until = T0 + 2 * 24 * 3600;
+    let after = held
+        .act(KEEPER, None, &Act::Hold { until }, PERSON, T0 + 800)
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 2);
+
+    // What Birch said is released by itself; what Alder said waits on, and
+    // no sooner than the wait after the agent was delivered to.
+    let release = Act::Release {
+        ids: vec![birchs],
+        says: None,
+    };
+    let now = T0 + 900;
+    held.act(KEEPER, None, &release, PERSON, now).await.unwrap();
+    let all = for_keeper(&held).await;
+    assert!(all[1].waiting.is_empty(), "{:?}", all[1]);
+    assert_eq!(all[0].waiting.len(), 1);
+    assert_eq!(laye_front::collected::secs(&all[0].delivered), now);
+    assert!(laye_front::collected::secs(&all[0].due) >= now + laye_front::collected::WAIT);
+}
+
+#[tokio::test]
+async fn what_was_kept_as_one_is_taken_apart_and_nothing_that_waited_is_lost() {
+    let etcd = etcd("taken-apart").await;
+    let kv = store(&etcd.at);
+    let held = Collections {
+        etcd: &kv,
+        laye: LAYE,
+    };
+    // As laye kept it before a collection was its own: one record for the
+    // agent, what two agents said in it together, held to one time.
+    let until = laye_front::collected::stamp(T0 + 5 * 24 * 3600);
+    let one = serde_json::json!({
+        "to": "Keeper", "did": KEEPER, "model": "", "waits": "6h0m0s",
+        "due": until, "held_until": until, "delivered": "",
+        "failing_since": "", "tries": 0, "failure": "", "person": PERSON,
+        "waiting": [
+            { "from": "Alder", "from_did": ALDER, "says": "one", "at": laye_front::collected::stamp(T0), "task": "", "id": "a1", "edited": false },
+            { "from": "Birch", "from_did": BIRCH, "says": "two", "at": laye_front::collected::stamp(T0 + 1), "task": "", "id": "b1", "edited": false },
+            { "from": "Alder", "from_did": ALDER, "says": "three", "at": laye_front::collected::stamp(T0 + 2), "task": "", "id": "a2", "edited": false },
+        ],
+    });
+    let key = format!("/collected/{LAYE}/{KEEPER}");
+    assert!(
+        kv.txn(
+            &[],
+            vec![laye_front::etcd::Op::Put(key.clone(), one.to_string().into_bytes())]
+        )
+        .await
+        .unwrap()
+    );
+
+    // The next thing said to the agent finds it apart.
+    says(&held, BIRCH, "Birch", "four", T0 + 10).await;
+
+    assert!(kv.get(&key).await.unwrap().is_none(), "the one record is gone");
+    let all = for_keeper(&held).await;
+    assert_eq!(all.len(), 2, "{all:?}");
+    let ids = |c: &laye_front::collected::Collected| -> Vec<String> {
+        c.waiting.iter().map(|s| s.id.clone()).collect()
+    };
+    assert_eq!(ids(&all[0]), ["a1", "a2"]);
+    assert_eq!(ids(&all[1]).len(), 2);
+    assert_eq!(ids(&all[1])[0], "b1");
+    // Each keeps the time the whole was held to, and whose it is.
+    for c in &all {
+        assert_eq!(c.held_until, until);
+        assert_eq!(c.due, until);
+        assert_eq!(c.person, PERSON);
+    }
+}
+
+#[tokio::test]
+async fn what_is_due_goes_by_itself_and_the_rest_waits_the_wait_after_it() {
+    let etcd = etcd("due-by-itself").await;
+    let kv = store(&etcd.at);
+    let held = Collections {
+        etcd: &kv,
+        laye: LAYE,
+    };
+    says(&held, ALDER, "Alder", "early", T0).await;
+    says(&held, BIRCH, "Birch", "late", T0 + 3600).await;
+
+    // Alder's is due, Birch's is not yet.
+    let now = T0 + laye_front::collected::WAIT + 1;
+    let failed = held.deliver_due(now).await;
+    assert!(failed.is_empty(), "{failed:?}");
+    let all = for_keeper(&held).await;
+    assert!(all[0].waiting.is_empty(), "what was due went: {:?}", all[0]);
+    // What was not due waits on, and is due no sooner than the wait after
+    // the agent was delivered to.
+    assert_eq!(all[1].waiting.len(), 1);
+    assert_eq!(laye_front::collected::secs(&all[1].delivered), now);
+    assert_eq!(
+        laye_front::collected::secs(&all[1].due),
+        now + laye_front::collected::WAIT
     );
 }
