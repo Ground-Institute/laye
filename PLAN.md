@@ -23,8 +23,8 @@ The lines below are not quotes. Each is an interpretation and carries its id.
 - [x] `P2P2A2A_A_005_01` C says who administers laye.ground.institute, as the pbt it is deployed with says (Ground-Institute/laye.ground.institute `controls/laye.pbt`), and nothing else about anyone.
   Proof: on 2026-11-26 08:29 UTC `https://c.sbvh.nl/laye/administrator/teranos` answered `{"administers":true,"administrator":"teranos"}` and `/laye/administrator/nobody` answered `{"administers":false,"administrator":"nobody"}`.
 
-- [ ] `P2P2A2A_A_005_02` At laye's own name C stands in front: it answers what it holds, and hands every other request on to laye's front on q, as it came.
-  Proof: with laye.ground.institute reaching C, a passkey signs a person in there as before, and `/laye/administrator/teranos` there is C's answer. On 2026-11-26 the second holds, and `/laye/me` and `/laye/challenge` come back from q through C; no passkey has signed in through it yet.
+- [x] `P2P2A2A_A_005_02` At laye's own name C stands in front: it answers what it holds, and hands every other request on to laye's front on q, as it came.
+  Proof: on 2026-11-26, with laye.ground.institute reaching C, the person signed in there with their passkey ("ok, i did that"), `/laye/me` and `/laye/challenge` came back from q through C, and `/laye/administrator/teranos` there was C's answer.
 
 - [x] `P2P2A2A_A_005_03` laye.ground.institute reaches C. Until 2026-11-26 the name was a record pointing at q, made on 2026-11-15 when laye ran nowhere else.
   Proof: on 2026-11-26 the name resolves through Cloudflare, and `ground laye` on l said "https://laye.ground.institute: teranos administers it, as the administrator of Ground-Institute; laye says so too".
