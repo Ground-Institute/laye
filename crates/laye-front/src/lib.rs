@@ -948,10 +948,11 @@ async fn reach_approved(
     person: &str,
 ) -> Result<(), String> {
     let all = held.all().await?;
-    let Some(waits) = all.into_iter().find(|c| c.did == did) else {
-        return Ok(());
-    };
-    for one in waits.waiting {
+    for one in all
+        .into_iter()
+        .filter(|c| c.did == did)
+        .flat_map(|c| c.waiting)
+    {
         let (path, asked, line, peer) = if let Some(reach) = one.reach.as_ref() {
             (
                 REACH_ON_PEER,
@@ -1015,6 +1016,7 @@ async fn reach_approved(
         eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
         held.act(
             did,
+            None,
             &collected::Act::Edit {
                 id: one.id.clone(),
                 says: format!("{person} approved, and it is done on {peer}: {line}"),
@@ -1031,7 +1033,8 @@ async fn reach_approved(
 const ACTS: [&str; 5] = ["release", "hold", "later", "cancel", "edit"];
 
 /// A person's act on what waits for one agent:
-/// {"did", "act": release|hold|later|cancel|edit, "ids", "says", "until", "id"}.
+/// {"did", "act": release|hold|later|cancel|edit, "collection", "ids", "says", "until", "id"}.
+/// `collection` is the one acted on; without it, each the act is of.
 /// An act the path names stands for the body's, and `to` for `did`, as ag
 /// asks the node (QNTX server/collected.go).
 async fn act_on(
@@ -1048,6 +1051,8 @@ async fn act_on(
         did: String,
         #[serde(default)]
         act: String,
+        #[serde(default)]
+        collection: Option<String>,
         #[serde(default)]
         ids: Vec<String>,
         #[serde(default)]
@@ -1103,8 +1108,14 @@ async fn act_on(
     {
         return refused(502, why);
     }
-    match held.act(&asked.did, &act, person, now()).await {
-        Ok(after) => (200, serde_json::json!(after)),
+    let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
+    match held
+        .act(&asked.did, collection, &act, person, now())
+        .await
+    {
+        // One collection acted on is answered as itself, as it always was.
+        Ok(mut after) if after.len() == 1 => (200, serde_json::json!(after.remove(0))),
+        Ok(after) => (200, serde_json::json!({ "collected": after })),
         Err(why) => refused(409, why),
     }
 }

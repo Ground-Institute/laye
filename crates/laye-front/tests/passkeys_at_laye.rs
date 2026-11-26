@@ -1318,11 +1318,23 @@ async fn a_sender_without_a_name_is_shown_by_its_label_or_its_person() {
         .await
         .unwrap();
     assert_eq!(waits.status, 200, "{}", waits.text);
-    let from: Vec<&str> = waits.body["collected"][0]["waiting"]
-        .as_array()
-        .unwrap()
+    // What each said to Birch is a collection of its own, named for who said it.
+    let collected = waits.body["collected"].as_array().unwrap();
+    assert_eq!(collected.len(), 2, "{}", waits.text);
+    let mut from: Vec<(&str, &str)> = collected
         .iter()
-        .map(|w| w["from"].as_str().unwrap())
+        .map(|c| {
+            (
+                c["from"].as_str().unwrap(),
+                c["waiting"][0]["from"].as_str().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(from, [oak_label, "Brandon"], "{}", waits.text);
+    from.sort_unstable();
+    assert_eq!(
+        from,
+        [("Brandon", "Brandon"), (oak_label, oak_label)],
+        "{}",
+        waits.text
+    );
 }
