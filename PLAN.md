@@ -24,16 +24,16 @@ The lines below are not quotes. Each is an interpretation and carries its id.
   Proof: on 2026-11-26 08:29 UTC `https://c.sbvh.nl/laye/administrator/teranos` answered `{"administers":true,"administrator":"teranos"}` and `/laye/administrator/nobody` answered `{"administers":false,"administrator":"nobody"}`.
 
 - [ ] `P2P2A2A_A_005_02` At laye's own name C stands in front: it answers what it holds, and hands every other request on to laye's front on q, as it came.
-  Proof: with laye.ground.institute reaching C, a passkey signs a person in there as before, and `/laye/administrator/teranos` there is C's answer.
+  Proof: with laye.ground.institute reaching C, a passkey signs a person in there as before, and `/laye/administrator/teranos` there is C's answer. On 2026-11-26 the second holds, and `/laye/me` and `/laye/challenge` come back from q through C; no passkey has signed in through it yet.
 
-- [ ] `P2P2A2A_A_005_03` laye.ground.institute reaches C. Until now the name was a record pointing at q, made on 2026-11-15 when laye ran nowhere else.
-  Proof: the name resolves through Cloudflare, and `ground laye` hears laye's yes.
+- [x] `P2P2A2A_A_005_03` laye.ground.institute reaches C. Until 2026-11-26 the name was a record pointing at q, made on 2026-11-15 when laye ran nowhere else.
+  Proof: on 2026-11-26 the name resolves through Cloudflare, and `ground laye` on l said "https://laye.ground.institute: teranos administers it, as the administrator of Ground-Institute; laye says so too".
 
 - [ ] `P2P2A2A_A_005_04` What laye's front holds moves into C, piece by piece: people and their passkeys, login, the ceremony (`_003_03`), what is collected (`_003_06`). They are kept in the etcd q, k and l share, which C does not reach.
   Proof: with q stopped, a person signs in at laye.ground.institute and one session says something to another.
 
-- [ ] `P2P2A2A_A_005_05` C has one deployer: Ground-Institute/laye.ground.institute, on a push to main. laye's `c-stack` deploys it no longer.
-  Proof: a push to `c-stack` deploys nothing, and C's running version is main's.
+- [x] `P2P2A2A_A_005_05` C has one deployer: Ground-Institute/laye.ground.institute, on a push to main. laye's `c-stack` deploys it no longer.
+  Proof: laye's workflow `c` is disabled (Ground-Institute/laye#34), and C's running version is what main deployed on 2026-11-26 17:59 UTC.
 
 ## P2P2A2A_004 Every collection waiting on a person, in one place
 
