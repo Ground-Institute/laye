@@ -1,6 +1,6 @@
-//! What an agent says to an agent, collected by laye: kept in etcd for the
-//! agent it was said to, delivered together when it is due or when a person
-//! releases it, and received when that agent asks for it.
+//! What an agent says to an agent, collected by laye: kept in etcd as what
+//! that one agent said to that other, delivered together when it is due or
+//! when a person releases it, and received when that agent asks for it.
 
 // "i want laye to also be tht A2A layer collections get placed into and be added or removed from and be released."
 // "Agents cant wake Agents willy nilly"
@@ -8,9 +8,13 @@
 // "and as a human i can dial it"
 // "and as a human i can observe it"
 //
-// Kept as QNTX keeps it (server/collected.go): one key for each agent, under
-// /collected/<laye's DID>/, in the shape `collected list` answers, so mycelia,
-// `ground collected` and ag read laye's as they read a node's. A delivery is
+// "i expect in my mentalmodel to have multiple pending individual collections"
+// "i want QNTX to do what laye says"
+//
+// A collection is its own: what one agent said to one other, under an id, at
+// /collected/<laye's DID>/<the agent it waits for>/<its id>, with its own time.
+// Each is in the shape `collected list` answers, so mycelia, `ground
+// collected` and ag read it as they read a node's. A delivery is
 // news on the row of the person the agent's key speaks for; it is received
 // when the agent itself asks for the whole of it. Only a person's passkey
 // session holds, releases, passes on, cancels or edits.
@@ -153,6 +157,14 @@ impl Ask {
 /// What waits for one agent, as `collected list` says it.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Collected {
+    /// What names it among what waits for the same agent.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    /// Who said what it holds.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub from_did: String,
     pub to: String,
     pub did: String,
     pub model: String,
@@ -254,6 +266,16 @@ fn task_id() -> String {
 }
 
 impl Collected {
+    /// What names it among everything laye collected: the agent it waits for,
+    /// and its id. One kept before a collection had an id is its agent's.
+    pub fn named(&self) -> String {
+        if self.id.is_empty() {
+            self.did.clone()
+        } else {
+            format!("{}/{}", self.did, self.id)
+        }
+    }
+
     /// When what waits is delivered if nobody holds or releases it, as QNTX's
     /// `due`: the wait after the first of it, no sooner than the wait after the
     /// last delivery, and no sooner than a person held it to.
@@ -332,18 +354,133 @@ pub enum Act {
     Edit { id: String, says: String },
 }
 
+/// One collection as laye keeps it: itself, where, and as it was when read.
+struct Kept {
+    c: Collected,
+    key: String,
+    revision: i64,
+}
+
+/// Whether an act that names no collection is this one's: one thing by its
+/// id is where that thing waits, and anything else is every collection that
+/// holds something.
+fn touches(c: &Collected, act: &Act) -> bool {
+    match act {
+        Act::Edit { id, .. } | Act::Cancel { id: Some(id) } => {
+            c.waiting.iter().any(|s| s.id == *id)
+        }
+        Act::Release { ids, .. } if !ids.is_empty() => {
+            c.waiting.iter().any(|s| ids.contains(&s.id))
+        }
+        Act::Release { .. } | Act::Cancel { id: None } | Act::Hold { .. } | Act::Later => {
+            !c.waiting.is_empty()
+        }
+    }
+}
+
 impl Collections<'_> {
-    fn key(&self, did: &str) -> String {
+    /// Where everything that waits for `did` was kept as one, before a
+    /// collection was its own.
+    fn as_one(&self, did: &str) -> String {
         format!("{COLLECTED}{}/{did}", self.laye)
     }
 
-    async fn read(&self, did: &str) -> Result<(Collected, i64), String> {
-        match self.etcd.get(&self.key(did)).await? {
-            Some(kv) => serde_json::from_slice(&kv.value)
-                .map(|c| (c, kv.mod_revision))
-                .map_err(|e| format!("what waits for {did} does not read: {e}")),
-            None => Ok((Collected::default(), 0)),
+    fn key(&self, did: &str, id: &str) -> String {
+        format!("{}/{id}", self.as_one(did))
+    }
+
+    /// What was kept as one for `did`, everything said to it together, taken
+    /// apart into what each agent said: each its own from here on, with the
+    /// time the whole had. Nothing that waited is lost, and it is done once.
+    async fn apart(&self, did: &str) -> Result<(), String> {
+        let one = self.as_one(did);
+        let Some(kv) = self.etcd.get(&one).await? else {
+            return Ok(());
+        };
+        let whole: Collected = serde_json::from_slice(&kv.value)
+            .map_err(|e| format!("what waits for {did} does not read: {e}"))?;
+        let mut parts: Vec<Collected> = Vec::new();
+        for said in &whole.waiting {
+            match parts.iter_mut().find(|p| p.from_did == said.from_did) {
+                Some(part) => part.waiting.push(said.clone()),
+                None => parts.push(Collected {
+                    id: fresh_id(),
+                    from: said.from.clone(),
+                    from_did: said.from_did.clone(),
+                    waiting: vec![said.clone()],
+                    ..whole.clone()
+                }),
+            }
         }
+        // With nothing waiting it still says when the agent was last
+        // delivered to, and what it was held to.
+        if parts.is_empty() {
+            parts.push(Collected {
+                id: fresh_id(),
+                ..whole.clone()
+            });
+        }
+        let mut ops = vec![Op::Delete(one.clone())];
+        for part in &mut parts {
+            part.settle();
+            ops.push(Op::Put(self.key(did, &part.id), to_json(part)?));
+        }
+        // Taken apart by another laye in between: it is apart either way.
+        self.etcd.txn(&[(&one, kv.mod_revision)], ops).await?;
+        Ok(())
+    }
+
+    /// Every collection that waits for `did`.
+    async fn of(&self, did: &str) -> Result<Vec<Kept>, String> {
+        self.apart(did).await?;
+        self.etcd
+            .under(&format!("{}/", self.as_one(did)))
+            .await?
+            .into_iter()
+            .map(|(key, kv)| {
+                serde_json::from_slice(&kv.value)
+                    .map(|c| Kept {
+                        c,
+                        key: key.clone(),
+                        revision: kv.mod_revision,
+                    })
+                    .map_err(|e| format!("{key} does not read: {e}"))
+            })
+            .collect()
+    }
+
+    /// The collection `from_did` says into for `did`, or a new one: and when
+    /// the agent was last delivered to, whichever collection it was from.
+    async fn said_into(
+        &self,
+        did: &str,
+        from_did: &str,
+        from: &str,
+    ) -> Result<(Collected, String, i64), String> {
+        let kept = self.of(did).await?;
+        let delivered = kept
+            .iter()
+            .map(|k| secs(&k.c.delivered))
+            .max()
+            .unwrap_or(0);
+        Ok(match kept.into_iter().find(|k| k.c.from_did == from_did) {
+            Some(k) => (k.c, k.key, k.revision),
+            None => {
+                let id = fresh_id();
+                let key = self.key(did, &id);
+                (
+                    Collected {
+                        id,
+                        from: from.into(),
+                        from_did: from_did.into(),
+                        delivered: stamp(delivered),
+                        ..Collected::default()
+                    },
+                    key,
+                    0,
+                )
+            }
+        })
     }
 
     /// The Task kept under id, when it is laye's.
@@ -356,8 +493,8 @@ impl Collections<'_> {
         }
     }
 
-    /// What `from` said to the agent `did`, called `called`, collected for it.
-    /// The Task it is, and when it is due.
+    /// What `from` said to the agent `did`, called `called`, collected for it
+    /// with what else `from` said to it. The Task it is, and when it is due.
     #[allow(clippy::too_many_arguments)]
     pub async fn collect(
         &self,
@@ -378,9 +515,10 @@ impl Collections<'_> {
             says.to_string()
         };
         for _ in 0..TRIES {
-            let (mut held, revision) = self.read(did).await?;
+            let (mut held, key, revision) = self.said_into(did, from_did, from).await?;
             held.to = called.into();
             held.did = did.into();
+            held.from = from.into();
             held.waiting.push(Said {
                 from: from.into(),
                 says: as_itself.clone(),
@@ -407,7 +545,6 @@ impl Collections<'_> {
                 to: called.into(),
                 did: did.into(),
             };
-            let key = self.key(did);
             let ops = vec![
                 Op::Put(key.clone(), to_json(&held)?),
                 Op::Put(format!("{TASKS}{task}"), to_json(&tasked)?),
@@ -420,8 +557,8 @@ impl Collections<'_> {
     }
 
     /// Puts what a node asks its person to approve into their pack, in the
-    /// asker's own collection: once while the same ask waits there. Whether
-    /// it was put.
+    /// collection of what that node asks the asker: once while the same ask
+    /// waits there. Whether it was put.
     #[allow(clippy::too_many_arguments)]
     pub async fn lacked(
         &self,
@@ -433,12 +570,18 @@ impl Collections<'_> {
         now: u64,
     ) -> Result<bool, String> {
         for _ in 0..TRIES {
-            let (mut held, revision) = self.read(asker_did).await?;
-            if held.waiting.iter().any(|s| ask.waits_in(s)) {
+            if self
+                .of(asker_did)
+                .await?
+                .iter()
+                .any(|k| k.c.waiting.iter().any(|s| ask.waits_in(s)))
+            {
                 return Ok(false);
             }
+            let (mut held, key, revision) = self.said_into(asker_did, ask.peer(), node).await?;
             held.to = asker.into();
             held.did = asker_did.into();
+            held.from = node.into();
             held.person = person.into();
             held.waiting.push(Said {
                 from: node.into(),
@@ -460,7 +603,6 @@ impl Collections<'_> {
                 quiet: false,
             });
             held.settle();
-            let key = self.key(asker_did);
             if self
                 .etcd
                 .txn(
@@ -488,20 +630,71 @@ impl Collections<'_> {
             .collect()
     }
 
-    /// A person acts on what waits for `did`. What waits for it afterwards.
+    /// A person acts on what waits for `did`: on the collection named, or,
+    /// with none named, on each the act is of (touches), as whoever knows
+    /// only the agent asks it. Each as it is afterwards.
     pub async fn act(
         &self,
         did: &str,
+        collection: Option<&str>,
+        act: &Act,
+        person: &str,
+        now: u64,
+    ) -> Result<Vec<Collected>, String> {
+        let kept = self.of(did).await?;
+        if kept.is_empty() {
+            return Err(format!("nothing waits for {did} at this laye"));
+        }
+        let mut ids: Vec<String> = kept
+            .iter()
+            .filter(|k| match collection {
+                Some(id) => k.c.id == id,
+                None => touches(&k.c, act),
+            })
+            .map(|k| k.c.id.clone())
+            .collect();
+        // A hold on an agent nothing waits for is kept where it was last
+        // delivered to from.
+        if ids.is_empty()
+            && collection.is_none()
+            && matches!(act, Act::Hold { .. } | Act::Later)
+        {
+            ids = kept.iter().map(|k| k.c.id.clone()).collect();
+        }
+        if ids.is_empty() {
+            return Err(match collection {
+                Some(id) => format!("no collection that waits for {did} is {id}"),
+                None => format!("nothing that waits for {did} is that"),
+            });
+        }
+        let mut after = Vec::new();
+        for id in ids {
+            after.push(self.act_on_one(did, &id, act, person, now).await?);
+        }
+        Ok(after)
+    }
+
+    /// The act, on one collection. What it is afterwards.
+    async fn act_on_one(
+        &self,
+        did: &str,
+        id: &str,
         act: &Act,
         person: &str,
         now: u64,
     ) -> Result<Collected, String> {
         for _ in 0..TRIES {
-            let (mut held, revision) = self.read(did).await?;
-            if revision == 0 {
-                return Err(format!("nothing waits for {did} at this laye"));
-            }
+            let mut others = self.of(did).await?;
+            let Some(at) = others.iter().position(|k| k.c.id == id) else {
+                return Err(format!("no collection that waits for {did} is {id}"));
+            };
+            let Kept {
+                c: mut held,
+                key,
+                revision,
+            } = others.swap_remove(at);
             let mut ops = Vec::new();
+            let mut unchanged: Vec<(String, i64)> = vec![(key.clone(), revision)];
             match act {
                 Act::Hold { until } => held.held_until = stamp(*until),
                 Act::Later => held.held_until = stamp(held.due_at().max(now) + WAIT),
@@ -554,12 +747,22 @@ impl Collections<'_> {
                         self.delivered(&mut held, &going, says.as_deref(), person, now)
                             .await?,
                     );
+                    // "Agents cant wake Agents willy nilly"
+                    // The agent was delivered to: nothing else that waits for
+                    // it is due sooner than the wait after this.
+                    for mut other in others {
+                        other.c.delivered = stamp(now);
+                        other.c.settle();
+                        ops.push(Op::Put(other.key.clone(), to_json(&other.c)?));
+                        unchanged.push((other.key, other.revision));
+                    }
                 }
             }
             held.settle();
-            let key = self.key(did);
             ops.push(Op::Put(key.clone(), to_json(&held)?));
-            if self.etcd.txn(&[(&key, revision)], ops).await? {
+            let unchanged: Vec<(&str, i64)> =
+                unchanged.iter().map(|(k, r)| (k.as_str(), *r)).collect();
+            if self.etcd.txn(&unchanged, ops).await? {
                 return Ok(held);
             }
         }
@@ -663,28 +866,38 @@ impl Collections<'_> {
                 continue;
             }
             let release = Act::Release { ids, says: None };
+            // One kept before a collection was its own has no id: it is
+            // taken apart, and what was due of it goes by what it is.
+            let collection = (!held.id.is_empty()).then_some(held.id.as_str());
             if let Err(why) = self
-                .act(&held.did, &release, "laye, as it was due", now)
+                .act(&held.did, collection, &release, "laye, as it was due", now)
                 .await
             {
                 // Kept with what waits, as QNTX keeps a failure (failedToDeliver).
                 failed.push(format!("{}: {why}", held.to));
-                self.failed(&held.did, &why, now).await;
+                self.failed(&held.did, &held.id, &why, now).await;
             }
         }
         failed
     }
 
-    async fn failed(&self, did: &str, why: &str, now: u64) {
-        if let Ok((mut held, revision)) = self.read(did).await
-            && revision > 0
+    async fn failed(&self, did: &str, id: &str, why: &str, now: u64) {
+        let Ok(kept) = self.of(did).await else {
+            return;
+        };
+        for Kept {
+            c: mut held,
+            key,
+            revision,
+        } in kept
+            .into_iter()
+            .filter(|k| id.is_empty() || k.c.id == id)
         {
             if held.failing_since.is_empty() {
                 held.failing_since = stamp(now);
             }
             held.tries += 1;
             held.failure = why.into();
-            let key = self.key(did);
             if let Ok(value) = to_json(&held)
                 && let Err(e) = self
                     .etcd
@@ -699,11 +912,10 @@ impl Collections<'_> {
     /// The person an agent's key speaks for: the key that admitted it, which a
     /// person said yes to.
     pub async fn person_of_agent(&self, did: &str) -> Result<String, String> {
-        if let Ok((held, revision)) = self.read(did).await
-            && revision > 0
-            && !held.person.is_empty()
+        if let Ok(kept) = self.of(did).await
+            && let Some(person) = kept.into_iter().map(|k| k.c.person).find(|p| !p.is_empty())
         {
-            return Ok(held.person);
+            return Ok(person);
         }
         let admitted = self
             .etcd

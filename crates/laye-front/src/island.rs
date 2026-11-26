@@ -126,7 +126,7 @@ pub fn shown(c: &Collected) -> serde_json::Value {
     let press = |says: &str, does: &str, then: &str, act: &str, armed: bool| {
         serde_json::json!({
             "says": says, "does": does, "then": then, "path": format!("{ACT}{act}"),
-            "sent": { "to": c.did }, "armed": armed,
+            "sent": { "to": c.did, "collection": c.id }, "armed": armed,
         })
     };
     // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
@@ -213,7 +213,7 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
                 Err(why) => failed.push(why),
             }
         }
-        let waits = waits_of(&c.did);
+        let waits = waits_of(&c.named());
         for (key, _) in phones {
             let Some(phone) = key.rsplit('/').next().map(str::to_string) else {
                 continue;
@@ -230,7 +230,7 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
             {
                 continue;
             }
-            let started = format!("{STARTED}{phone}/{}", c.did);
+            let started = format!("{STARTED}{phone}/{}", c.named());
             if let Ok(Some(kv)) = held.etcd.get(&started).await
                 && kv.value == c.due.as_bytes()
             {
@@ -297,7 +297,7 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
         let Some(did) = stands.waits.strip_prefix("laye/collected/") else {
             continue;
         };
-        let c = all.iter().find(|c| c.did == did);
+        let c = all.iter().find(|c| c.named() == did);
         let (event, state, stale, dismissal) = match c {
             Some(c) if !c.waiting.is_empty() => {
                 let state = shown(c);
