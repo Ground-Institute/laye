@@ -2,6 +2,39 @@
 
 Each slice says what exists when it is done, then what proves it.
 
+## P2P2A2A_005 C holds laye's name
+
+Owner: Fuck.
+
+Of what was said on 2026-11-26:
+
+"that laye itself laye ground institue itself has its own pbt governing itself, and you can see it on github, and that is what verified means"
+
+"laye owns identity, laye owns login, laye owns A2A"
+
+"why does it point to a specific qntx backend"
+
+"laye needs to keep being there when qntx is down"
+
+"ok, so i want C to be the one"
+
+The lines below are not quotes. Each is an interpretation and carries its id.
+
+- [x] `P2P2A2A_A_005_01` C says who administers laye.ground.institute, as the pbt it is deployed with says (Ground-Institute/laye.ground.institute `controls/laye.pbt`), and nothing else about anyone.
+  Proof: on 2026-11-26 08:29 UTC `https://c.sbvh.nl/laye/administrator/teranos` answered `{"administers":true,"administrator":"teranos"}` and `/laye/administrator/nobody` answered `{"administers":false,"administrator":"nobody"}`.
+
+- [ ] `P2P2A2A_A_005_02` At laye's own name C stands in front: it answers what it holds, and hands every other request on to laye's front on q, as it came.
+  Proof: with laye.ground.institute reaching C, a passkey signs a person in there as before, and `/laye/administrator/teranos` there is C's answer.
+
+- [ ] `P2P2A2A_A_005_03` laye.ground.institute reaches C. Until now the name was a record pointing at q, made on 2026-11-15 when laye ran nowhere else.
+  Proof: the name resolves through Cloudflare, and `ground laye` hears laye's yes.
+
+- [ ] `P2P2A2A_A_005_04` What laye's front holds moves into C, piece by piece: people and their passkeys, login, the ceremony (`_003_03`), what is collected (`_003_06`). They are kept in the etcd q, k and l share, which C does not reach.
+  Proof: with q stopped, a person signs in at laye.ground.institute and one session says something to another.
+
+- [ ] `P2P2A2A_A_005_05` C has one deployer: Ground-Institute/laye.ground.institute, on a push to main. laye's `c-stack` deploys it no longer.
+  Proof: a push to `c-stack` deploys nothing, and C's running version is main's.
+
 ## P2P2A2A_004 Every collection waiting on a person, in one place
 
 Owner: Cumulus.
