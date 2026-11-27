@@ -209,6 +209,7 @@ async fn what_is_released_for_the_nodes_agent_is_news_laye_hands_back() {
         "did:key:z6MkAlder",
         "Alder",
         "the build is green",
+        &[],
         "c1",
         &whose,
         1_795_000_000,
@@ -268,6 +269,7 @@ async fn what_wakes_nobody_is_never_due_by_itself() {
         "did:key:z6MkNode",
         "GitHub",
         "#1 merged",
+        &[],
         "c2",
         &quiet,
         1_795_000_000,
@@ -309,6 +311,7 @@ async fn says(held: &Collections<'_>, from_did: &str, from: &str, says: &str, at
         from_did,
         from,
         says,
+        &[],
         "c",
         &Whose {
             person: PERSON.into(),

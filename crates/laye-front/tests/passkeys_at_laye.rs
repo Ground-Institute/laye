@@ -927,6 +927,83 @@ async fn one_session_says_to_another_through_laye_and_it_arrives() {
     assert_eq!(one["waiting"][0]["from"], "Alder");
     assert_eq!(one["waiting"][0]["from_did"], did(&alder));
     assert_eq!(one["waiting"][0]["says"], "the tide is in");
+    assert!(one["waiting"][0].get("a2ui").is_none(), "{}", waits.text);
+
+    // "Getting A2UI pieces to show up in another session from this one"
+    // Alder says a surface beside its words, as ground say --a2ui does: the
+    // A2UI messages are kept as they were said, beside what it says.
+    let surface = json!([{
+        "version": "1.0",
+        "createSurface": {
+            "surfaceId": "which-first",
+            "catalogId": "https://a2ui.org/specification/v1_0/catalogs/basic/catalog.json",
+            "components": [{ "id": "root", "component": "Text", "text": "Which do I do first?" }],
+        },
+    }]);
+    let send = json!({
+        "message": { "messageId": "ground-say-2", "role": "ROLE_USER", "parts": [
+            { "text": "Which do I do first?" },
+            { "data": surface, "mediaType": "application/a2ui+json", "metadata": { "mimeType": "application/a2ui+json" } },
+        ] },
+        "configuration": { "returnImmediately": true },
+    });
+    let sent = signed_ask(
+        front,
+        "POST",
+        "/a2a/Birch/message:send",
+        &alder,
+        &send.to_string(),
+    )
+    .await;
+    assert_eq!(sent.status, 200, "{}", sent.text);
+    let waits = ask(front, RP, "GET", "/laye/collected", &session, "")
+        .await
+        .unwrap();
+    let one = &waits.body["collected"][0];
+    assert_eq!(
+        one["waiting"][1]["says"], "Which do I do first?",
+        "{}",
+        waits.text
+    );
+    assert_eq!(one["waiting"][1]["a2ui"], surface, "{}", waits.text);
+
+    // A2UI whose data is no list of messages is refused, and says why;
+    // nothing more waits.
+    let send = json!({
+        "message": { "messageId": "ground-say-3", "role": "ROLE_USER", "parts": [
+            { "text": "x" },
+            { "data": surface[0], "metadata": { "mimeType": "application/a2ui+json" } },
+        ] },
+        "configuration": { "returnImmediately": true },
+    });
+    let refused = signed_ask(
+        front,
+        "POST",
+        "/a2a/Birch/message:send",
+        &alder,
+        &send.to_string(),
+    )
+    .await;
+    assert_eq!(refused.status, 400, "{}", refused.text);
+    assert!(
+        refused
+            .text
+            .contains("A2UI data is a list of A2UI messages, and part 1's is not"),
+        "{}",
+        refused.text
+    );
+    let waits = ask(front, RP, "GET", "/laye/collected", &session, "")
+        .await
+        .unwrap();
+    assert_eq!(
+        waits.body["collected"][0]["waiting"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "{}",
+        waits.text
+    );
     let row = signed_get(front, "/am/statusline?format=json", &qntx_key).await;
     assert_eq!(row.body["items"], json!([]), "{}", row.text);
 
