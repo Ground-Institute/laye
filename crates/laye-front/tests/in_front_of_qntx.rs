@@ -119,6 +119,7 @@ fn config(qntx: SocketAddr, held_at: PathBuf) -> Config {
         web: None,
         apns: None,
         pack_nodes: Vec::new(),
+        governed: None,
         held_at,
     }
 }

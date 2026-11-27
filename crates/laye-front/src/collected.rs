@@ -458,11 +458,7 @@ impl Collections<'_> {
         from: &str,
     ) -> Result<(Collected, String, i64), String> {
         let kept = self.of(did).await?;
-        let delivered = kept
-            .iter()
-            .map(|k| secs(&k.c.delivered))
-            .max()
-            .unwrap_or(0);
+        let delivered = kept.iter().map(|k| secs(&k.c.delivered)).max().unwrap_or(0);
         Ok(match kept.into_iter().find(|k| k.c.from_did == from_did) {
             Some(k) => (k.c, k.key, k.revision),
             None => {
@@ -655,10 +651,7 @@ impl Collections<'_> {
             .collect();
         // A hold on an agent nothing waits for is kept where it was last
         // delivered to from.
-        if ids.is_empty()
-            && collection.is_none()
-            && matches!(act, Act::Hold { .. } | Act::Later)
-        {
+        if ids.is_empty() && collection.is_none() && matches!(act, Act::Hold { .. } | Act::Later) {
             ids = kept.iter().map(|k| k.c.id.clone()).collect();
         }
         if ids.is_empty() {
@@ -889,9 +882,7 @@ impl Collections<'_> {
             c: mut held,
             key,
             revision,
-        } in kept
-            .into_iter()
-            .filter(|k| id.is_empty() || k.c.id == id)
+        } in kept.into_iter().filter(|k| id.is_empty() || k.c.id == id)
         {
             if held.failing_since.is_empty() {
                 held.failing_since = stamp(now);
