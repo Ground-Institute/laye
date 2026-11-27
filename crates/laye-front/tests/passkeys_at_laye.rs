@@ -206,6 +206,7 @@ async fn laye(name: &str, etcd: &str, roots: Vec<String>, signers: Vec<String>) 
             web: None,
             apns: None,
             pack_nodes: Vec::new(),
+            governed: None,
         },
         laye_me::fresh(),
     )

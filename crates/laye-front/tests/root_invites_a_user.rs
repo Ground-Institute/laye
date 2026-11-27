@@ -92,6 +92,7 @@ async fn world(name: &str) -> World {
             web: None,
             apns: None,
             pack_nodes: Vec::new(),
+            governed: None,
         },
         laye.clone(),
     )

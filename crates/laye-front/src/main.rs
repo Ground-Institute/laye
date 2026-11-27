@@ -31,6 +31,33 @@ struct File {
     apns: Option<laye_front::apns::ApnsAt>,
     #[serde(default)]
     pack_nodes: Vec<String>,
+    /// The file `ground laye json` wrote: what ground's pbt says of this laye.
+    #[serde(default)]
+    governed_by: Option<PathBuf>,
+}
+
+/// What ground's pbt says of this laye, read whole from the file ground wrote;
+/// none when the settings name no such file.
+fn governed(
+    at: Option<&PathBuf>,
+) -> Result<Option<laye_front::Governed>, Box<sacred_error::Error>> {
+    let Some(at) = at else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(at).map_err(|e| {
+        laye_peer::error(
+            "governed_by",
+            "what ground says of laye does not read",
+            format!("{}: {e}", at.display()),
+        )
+    })?;
+    serde_json::from_str(&text).map(Some).map_err(|e| {
+        laye_peer::error(
+            "governed_by",
+            "what ground says of laye is not what `ground laye json` writes",
+            format!("{}: {e}", at.display()),
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -85,6 +112,7 @@ async fn main() {
         ))
     });
     let key = laye_peer::key_at(&file.key).unwrap_or_else(|e| fail(&e));
+    let governed = governed(file.governed_by.as_ref()).unwrap_or_else(|e| fail(&e));
     let (front, run) = laye_front::start(
         laye_front::Config {
             listen,
@@ -107,6 +135,7 @@ async fn main() {
             web: file.web,
             apns: file.apns,
             pack_nodes: file.pack_nodes,
+            governed,
         },
         key,
     )

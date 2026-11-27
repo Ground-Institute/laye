@@ -195,6 +195,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path, etcd: &str, admitters: Vec<St
         web: None,
         apns: None,
         pack_nodes: Vec::new(),
+        governed: None,
     }
 }
 

@@ -63,6 +63,7 @@ fn config(qntx: SocketAddr, dir: &std::path::Path) -> Config {
         web: None,
         apns: None,
         pack_nodes: Vec::new(),
+        governed: None,
     }
 }
 
