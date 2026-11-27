@@ -105,6 +105,8 @@ pub struct Config {
     /// The nodes, beside QNTX in front of which laye stands, that hand laye
     /// the reach a refused request lacked, by their did:key.
     pub pack_nodes: Vec<String>,
+    /// What ground's pbt says of this laye. None says it was given nothing.
+    pub governed: Option<Governed>,
 }
 
 /// Where names are kept, and whose key admits a session's.
@@ -1109,10 +1111,7 @@ async fn act_on(
         return refused(502, why);
     }
     let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
-    match held
-        .act(&asked.did, collection, &act, person, now())
-        .await
-    {
+    match held.act(&asked.did, collection, &act, person, now()).await {
         // One collection acted on is answered as itself, as it always was.
         Ok(mut after) if after.len() == 1 => (200, serde_json::json!(after.remove(0))),
         Ok(after) => (200, serde_json::json!({ "collected": after })),
@@ -1576,6 +1575,40 @@ fn watch_collected(
     Some(resp)
 }
 
+// "its the story of someone verifying they can trust laye the network they are about to join, with their agent"
+// "can't we have it work in a way that we dont need to build the same parser twice?"
+//
+/// What ground's pbt says of a laye, as `ground laye json` writes it
+/// (Ground-Code source/administers.d asData): laye reads it, and no pbt.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct Governed {
+    /// The laye the pbt names.
+    pub url: String,
+    /// The org that governs it.
+    pub org: String,
+    /// The person who administers that org.
+    pub administrator: String,
+}
+
+/// Where laye says whether the account a name is administers it.
+const ADMINISTRATOR: &str = "/laye/administrator/";
+
+/// Whether the account a name is administers this laye, as ground says; and
+/// nothing else about anyone. A laye ground said nothing of says so.
+fn administers(governed: Option<&Governed>, name: &str) -> Response<Body> {
+    let Some(governed) = governed else {
+        return said(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "this laye was given nothing ground says of it: its settings name no governed_by",
+        );
+    };
+    json(
+        StatusCode::OK,
+        serde_json::json!({ "administrator": name, "administers": governed.administrator == name })
+            .to_string(),
+    )
+}
+
 async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> Response<Body> {
     // A request asking to upgrade (QNTX's page's WebSocket) is carried
     // through once both sides have switched.
@@ -1586,6 +1619,11 @@ async fn answer(inner: &Arc<Inner>, mut req: Request<hyper::body::Incoming>) -> 
     let (parts, body) = req.into_parts();
     if let Some(watching) = watch_collected(inner, &parts) {
         return watching;
+    }
+    if parts.method == hyper::Method::GET
+        && let Some(name) = parts.uri.path().strip_prefix(ADMINISTRATOR)
+    {
+        return administers(inner.config.governed.as_ref(), name);
     }
     let body = match body.collect().await {
         Ok(collected) => collected.to_bytes(),

@@ -351,7 +351,10 @@ async fn what_two_agents_say_to_one_are_two_collections_each_with_its_own_time()
     assert_eq!((birch.from.as_str(), birch.waiting.len()), ("Birch", 1));
     assert_ne!(alder.id, birch.id);
     // Each is due the wait after the first of its own.
-    assert_eq!(laye_front::collected::secs(&alder.due), T0 + laye_front::collected::WAIT);
+    assert_eq!(
+        laye_front::collected::secs(&alder.due),
+        T0 + laye_front::collected::WAIT
+    );
     assert_eq!(
         laye_front::collected::secs(&birch.due),
         T0 + 600 + laye_front::collected::WAIT
@@ -360,7 +363,13 @@ async fn what_two_agents_say_to_one_are_two_collections_each_with_its_own_time()
     // Held by itself: the other's time stays.
     let until = T0 + 3 * 24 * 3600;
     let after = held
-        .act(KEEPER, Some(&alder.id), &Act::Hold { until }, PERSON, T0 + 1000)
+        .act(
+            KEEPER,
+            Some(&alder.id),
+            &Act::Hold { until },
+            PERSON,
+            T0 + 1000,
+        )
         .await
         .unwrap();
     assert_eq!(after.len(), 1);
@@ -390,7 +399,10 @@ async fn an_act_that_names_only_the_agent_is_on_each_collection_it_is_of() {
         id: birchs.clone(),
         says: "the wind dropped".into(),
     };
-    let after = held.act(KEEPER, None, &edit, PERSON, T0 + 700).await.unwrap();
+    let after = held
+        .act(KEEPER, None, &edit, PERSON, T0 + 700)
+        .await
+        .unwrap();
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].from, "Birch");
     assert_eq!(after[0].waiting[0].says, "the wind dropped");
@@ -443,7 +455,10 @@ async fn what_was_kept_as_one_is_taken_apart_and_nothing_that_waited_is_lost() {
     assert!(
         kv.txn(
             &[],
-            vec![laye_front::etcd::Op::Put(key.clone(), one.to_string().into_bytes())]
+            vec![laye_front::etcd::Op::Put(
+                key.clone(),
+                one.to_string().into_bytes()
+            )]
         )
         .await
         .unwrap()
@@ -452,7 +467,10 @@ async fn what_was_kept_as_one_is_taken_apart_and_nothing_that_waited_is_lost() {
     // The next thing said to the agent finds it apart.
     says(&held, BIRCH, "Birch", "four", T0 + 10).await;
 
-    assert!(kv.get(&key).await.unwrap().is_none(), "the one record is gone");
+    assert!(
+        kv.get(&key).await.unwrap().is_none(),
+        "the one record is gone"
+    );
     let all = for_keeper(&held).await;
     assert_eq!(all.len(), 2, "{all:?}");
     let ids = |c: &laye_front::collected::Collected| -> Vec<String> {

@@ -243,6 +243,7 @@ async fn laye(name: &str, store: &Etcd, roots: Vec<String>) -> At {
             web: None,
             apns: None,
             pack_nodes: Vec::new(),
+            governed: None,
         },
         laye_me::fresh(),
     )
