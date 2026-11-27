@@ -13,6 +13,7 @@
 
 pub mod a2a_card;
 pub mod a2a_spoken;
+pub mod a2ui;
 pub mod apns;
 pub mod collected;
 mod connectors;
@@ -1109,10 +1110,7 @@ async fn act_on(
         return refused(502, why);
     }
     let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
-    match held
-        .act(&asked.did, collection, &act, person, now())
-        .await
-    {
+    match held.act(&asked.did, collection, &act, person, now()).await {
         // One collection acted on is answered as itself, as it always was.
         Ok(mut after) if after.len() == 1 => (200, serde_json::json!(after.remove(0))),
         Ok(after) => (200, serde_json::json!({ "collected": after })),
@@ -2104,6 +2102,7 @@ async fn connector_said(inner: &Inner, keys: &passkeys::Passkeys, body: &Bytes) 
             &asked.from_did,
             &asked.from,
             &asked.says,
+            &[],
             &context,
             &collected::Whose {
                 person: asked.person.clone(),
@@ -2164,6 +2163,10 @@ async fn as_collections(
                     "what is said to a name crosses the row as text, and this said none",
                 ));
             }
+            let a2ui = match a2ui::messages_of(&send.message.parts) {
+                Ok(a2ui) => a2ui,
+                Err(why) => return Some(said(StatusCode::BAD_REQUEST, why)),
+            };
             let from = match held.called(subject).await {
                 Ok(called) => called,
                 Err(why) => return failed(why),
@@ -2180,6 +2183,7 @@ async fn as_collections(
                     subject,
                     &from,
                     &says.join("\n"),
+                    &a2ui,
                     &context,
                     &collected::Whose::default(),
                     now(),
