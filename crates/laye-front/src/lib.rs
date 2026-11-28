@@ -740,7 +740,7 @@ async fn as_person(
                 etcd: &keys.etcd,
                 laye: &inner.did,
             };
-            return Some(match island::keep(&held, &person, &handed).await {
+            return Some(match island::keep(&held, &person, &handed, now()).await {
                 Ok(()) => json(StatusCode::OK, String::from("{}")),
                 Err(why) => said(StatusCode::BAD_REQUEST, why),
             });
