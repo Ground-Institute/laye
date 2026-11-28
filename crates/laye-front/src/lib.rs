@@ -1011,7 +1011,7 @@ async fn reach_approved(
             .await
             .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
             .unwrap_or_default();
-        if !status.is_success() {
+        if !approved_is_done(path, status) {
             return Err(format!(
                 "{line} was not done on {peer}: {status} {answered}"
             ));
@@ -1030,6 +1030,15 @@ async fn reach_approved(
         .await?;
     }
     Ok(())
+}
+
+/// Whether what the node answered an approve with means it is done. A key
+/// the peer already holds is done: QNTX answers its admit 409, and nothing
+/// else (server/auth/admit.go). The same admit approved on each of its
+/// duplicates was answered 409 after the first was done (q, 2026-11-28
+/// 10:36:24), and laye called it a failure.
+fn approved_is_done(path: &str, status: StatusCode) -> bool {
+    status.is_success() || (path == ADMIT_ON_PEER && status == StatusCode::CONFLICT)
 }
 
 /// What a person does with what waits for an agent.
@@ -2753,4 +2762,17 @@ fn write_whole(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     beside.push(".new");
     std::fs::write(&beside, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
     std::fs::rename(&beside, path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_the_peer_already_holds_is_an_approve_done() {
+        assert!(approved_is_done(ADMIT_ON_PEER, StatusCode::OK));
+        assert!(approved_is_done(ADMIT_ON_PEER, StatusCode::CONFLICT));
+        assert!(!approved_is_done(ADMIT_ON_PEER, StatusCode::BAD_REQUEST));
+        assert!(!approved_is_done(REACH_ON_PEER, StatusCode::CONFLICT));
+    }
 }
