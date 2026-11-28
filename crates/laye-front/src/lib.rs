@@ -943,14 +943,23 @@ const ADMIT_ON_PEER: &str = "/auth/laye/admit";
 /// Writes each reach line, and admits each key, among what is released, as
 /// the person who released it, through the primary. Each one done says so in
 /// what is delivered; one that is not stops the release, with why.
+///
+/// "why isnt it threaded through"
+/// 「[Opus 5.5] One that is not done comes back with the status the node gave it: its」
+/// 「[Opus 5.5] refusal is the node's answer, and reaches the person as the node said it.」
+/// 「[Opus 5.5] 502 is only for a node that did not answer at all: a 502 is what」
+/// 「[Opus 5.5] Cloudflare puts its own page over, and the node's words were lost under it.」
 async fn reach_approved(
     inner: &Inner,
     held: &collected::Collections<'_>,
     did: &str,
     ids: &[String],
     person: &str,
-) -> Result<(), String> {
-    let all = held.all().await?;
+) -> Result<(), (u16, Error)> {
+    let all = held
+        .all()
+        .await
+        .map_err(|why| (502, made(502, "what waits was not read".into(), why)))?;
     for one in all
         .into_iter()
         .filter(|c| c.did == did)
@@ -993,17 +1002,27 @@ async fn reach_approved(
                 label: "laye".into(),
             },
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            (
+                500,
+                made(500, "the ask was not signed".into(), e.to_string()),
+            )
+        })?;
         let req = Request::post(format!("{}{path}", inner.config.qntx))
             .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
             .header(hyper::header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(asked.to_string())))
-            .map_err(|e| e.to_string())?;
-        let resp = inner
-            .client
-            .request(req)
-            .await
-            .map_err(|e| format!("QNTX did not answer: {e}"))?;
+            .map_err(|e| (500, made(500, "the ask was not made".into(), e.to_string())))?;
+        let resp = inner.client.request(req).await.map_err(|e| {
+            (
+                502,
+                made(
+                    502,
+                    format!("QNTX did not answer laye's ask to do {line}"),
+                    e.to_string(),
+                ),
+            )
+        })?;
         let status = resp.status();
         let answered = resp
             .into_body()
@@ -1012,8 +1031,16 @@ async fn reach_approved(
             .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
             .unwrap_or_default();
         if !approved_is_done(path, status) {
-            return Err(format!(
-                "{line} was not done on {peer}: {status} {answered}"
+            // "it means threaded through"
+            // "each step in the thread should only say their thing, nothing more"
+            // 「[Opus 5.5] What QNTX answered, passed on as it came, with laye's one line.」
+            return Err((
+                status.as_u16(),
+                received_and_passed(
+                    status.as_u16(),
+                    &answered,
+                    format!("laye asked QNTX to do what {person} approved: {line}"),
+                ),
             ));
         }
         eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
@@ -1027,9 +1054,83 @@ async fn reach_approved(
             person,
             now(),
         )
-        .await?;
+        .await
+        .map_err(|why| {
+            (
+                502,
+                made(
+                    502,
+                    format!("{line} is done, and it was not written down"),
+                    why,
+                ),
+            )
+        })?;
     }
     Ok(())
+}
+
+// "and what get's sent to sentry or anything else , is the user experience of an error,"
+// "something that makes it easy for us to see and fix, because the experience being bad is immediatly clear and why"
+/// 「[Opus 5.5] An Error laye makes itself, where laye is where it broke: what was not done,」
+/// 「[Opus 5.5] and what was said of it.」
+fn made(status: u16, title: String, why: String) -> Error {
+    let at = chrono::Utc::now();
+    Error {
+        id: format!("laye-{}", at.timestamp_millis()),
+        severity: if status >= 500 && status != 503 {
+            sacred_error::Severity::Error
+        } else {
+            sacred_error::Severity::Warn
+        },
+        context: sacred_error::Context {
+            surface: "collected".into(),
+            region: None,
+            anchor: None,
+        },
+        title,
+        why,
+        trace: Vec::new(),
+        raw: None,
+        at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        source: Some("laye".into()),
+        ffi_call: None,
+        location: None,
+        js_stack: None,
+        raw_stderr: None,
+        requires_reload: false,
+    }
+}
+
+/// 「[Opus 5.5] The Error as the answer's body.」
+fn answer_of(failure: &Error) -> serde_json::Value {
+    serde_json::to_value(failure).unwrap_or_else(|e| {
+        serde_json::json!({ "title": failure.title, "why": format!("{} (the Error did not encode: {e})", failure.why) })
+    })
+}
+
+/// "it means threaded through"
+/// "each step in the thread should only say their thing, nothing more"
+/// 「[Opus 5.5] What QNTX answered, passed on as it came with laye's one line. An answer that」
+/// 「[Opus 5.5] is no Error becomes one here, once, its words kept whole as its raw.」
+fn received_and_passed(status: u16, answered: &str, hop: String) -> Error {
+    let received = match serde_json::from_str::<Error>(answered) {
+        Ok(failure) if !failure.title.is_empty() => failure,
+        _ => {
+            let mut once = made(
+                status,
+                format!("QNTX answered {status} with no Error"),
+                String::new(),
+            );
+            once.raw = Some(answered.to_string());
+            once
+        }
+    };
+    received.pass(hop)
+}
+
+/// 「[Opus 5.5] laye's own refusals, made where laye refuses.」
+fn shown(status: u16, title: String) -> (u16, serde_json::Value) {
+    (status, answer_of(&made(status, title, String::new())))
 }
 
 /// 「[Opus 5.5] Whether what the node answered an approve with means it is done. A key」
@@ -1074,7 +1175,7 @@ async fn act_on(
         #[serde(default)]
         id: Option<String>,
     }
-    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let refused = |status: u16, why: String| shown(status, why);
     let asked: Asked = match serde_json::from_slice(body) {
         Ok(asked) => asked,
         Err(e) => return refused(400, format!("an act is {{\"did\", \"act\"}}: {e}")),
@@ -1116,9 +1217,9 @@ async fn act_on(
     // A reach line asked for is written before what waits is released: the
     // asker hears that it was written, or nothing is released.
     if let collected::Act::Release { ids, .. } = &act
-        && let Err(why) = reach_approved(inner, held, &asked.did, ids, person).await
+        && let Err((status, failure)) = reach_approved(inner, held, &asked.did, ids, person).await
     {
-        return refused(502, why);
+        return (status, answer_of(&failure));
     }
     let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
     match held.act(&asked.did, collection, &act, person, now()).await {
@@ -2774,5 +2875,35 @@ mod tests {
         assert!(approved_is_done(ADMIT_ON_PEER, StatusCode::CONFLICT));
         assert!(!approved_is_done(ADMIT_ON_PEER, StatusCode::BAD_REQUEST));
         assert!(!approved_is_done(REACH_ON_PEER, StatusCode::CONFLICT));
+    }
+
+    // "each step in the thread should only say their thing, nothing more"
+    // 「[Opus 5.5] What QNTX answered leaves laye as it came, with laye's one line alone.」
+    #[test]
+    fn what_qntx_answered_is_passed_on_with_layes_line_alone() {
+        let received = made(
+            403,
+            "the line was refused".into(),
+            "not allowed, path".into(),
+        )
+        .pass("carried the reach line to kapteyn");
+        let answered = answer_of(&received).to_string();
+        let out = received_and_passed(
+            403,
+            &answered,
+            "laye asked QNTX to do what google:1 approved".into(),
+        );
+        let mut want = received.clone();
+        want.trace
+            .push("laye asked QNTX to do what google:1 approved".into());
+        assert_eq!(answer_of(&out), answer_of(&want));
+    }
+
+    // 「[Opus 5.5] An answer that is no Error becomes one at laye, once, kept whole.」
+    #[test]
+    fn an_answer_that_is_no_error_is_kept_whole() {
+        let out = received_and_passed(502, "<html>Bad gateway</html>", "laye asked QNTX".into());
+        assert_eq!(out.raw.as_deref(), Some("<html>Bad gateway</html>"));
+        assert_eq!(out.trace, vec!["laye asked QNTX"]);
     }
 }

@@ -6238,7 +6238,7 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 [[package]]
 name = "sacred-error"
 version = "0.1.0"
-source = "git+https://github.com/teranos/sacred-error?rev=aaf9a743a2b9b0d22c6059dddbfdc4897f6528c7#aaf9a743a2b9b0d22c6059dddbfdc4897f6528c7"
+source = "git+https://github.com/teranos/sacred-error?rev=a71a5150d9766e163ba9a0481da33dc3f1debbeb#a71a5150d9766e163ba9a0481da33dc3f1debbeb"
 dependencies = [
  "serde",
 ]
