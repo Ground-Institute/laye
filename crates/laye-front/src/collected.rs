@@ -22,6 +22,7 @@
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::devices;
 use crate::etcd::{Etcd, Op};
@@ -138,6 +139,13 @@ impl Ask {
             Ask::Reach(r) => r.line(),
             Ask::Admit(a) => a.line(),
         }
+    }
+
+    /// 「[Opus 5.5] What names the collection this ask begins: the node that asks it and」
+    /// 「[Opus 5.5] what it asks, the same for the same ask.」
+    pub fn id(&self) -> String {
+        let sum = Sha256::digest(format!("{}\n{}", self.peer(), self.line()).as_bytes());
+        sum.iter().take(8).map(|b| format!("{b:02x}")).collect()
     }
 
     /// The node that asks it.
@@ -580,7 +588,19 @@ impl Collections<'_> {
             {
                 return Ok(false);
             }
-            let (mut held, key, revision) = self.said_into(asker_did, ask.peer(), node).await?;
+            let (mut held, mut key, revision) = self.said_into(asker_did, ask.peer(), node).await?;
+            // 「[Opus 5.5] A collection the ask begins is named by the ask, not by chance:」
+            // 「[Opus 5.5] refusals of the same ask at once all begin the same one, one of」
+            // 「[Opus 5.5] them puts it, and the others find it waiting.」
+            if revision == 0 {
+                held.id = ask.id();
+                key = self.key(asker_did, &held.id);
+            }
+            // 「[Opus 5.5] Whether it waits is read again from what the write is guarded」
+            // 「[Opus 5.5] by: another may have put it since the look above.」
+            if held.waiting.iter().any(|s| ask.waits_in(s)) {
+                return Ok(false);
+            }
             held.to = asker.into();
             held.did = asker_did.into();
             held.from = node.into();
