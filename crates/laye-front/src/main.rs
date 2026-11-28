@@ -69,10 +69,7 @@ struct Qntx {
 fn fail(error: &sacred_error::Error) -> ! {
     match serde_json::to_string(error) {
         Ok(line) => eprintln!("{line}"),
-        Err(e) => eprintln!(
-            "{} ({}): {}; and it did not serialize: {e}",
-            error.title, error.id, error.why
-        ),
+        Err(e) => eprintln!("{error:?}; and it did not serialize: {e}"),
     }
     std::process::exit(1)
 }

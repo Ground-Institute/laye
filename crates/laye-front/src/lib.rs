@@ -1037,7 +1037,7 @@ async fn reach_approved(
             return Err((
                 status.as_u16(),
                 received_and_passed(
-                    status.as_u16(),
+                    &format!("QNTX {path}"),
                     &answered,
                     format!("laye asked QNTX to do what {person} approved: {line}"),
                 ),
@@ -1071,61 +1071,39 @@ async fn reach_approved(
 
 // "and what get's sent to sentry or anything else , is the user experience of an error,"
 // "something that makes it easy for us to see and fix, because the experience being bad is immediatly clear and why"
+/// 「[Fable 5.2] laye, as the layer that makes and receives Errors.」
+static HERE: sacred_error::Origin = sacred_error::Origin::new("laye", clock);
+
+fn clock() -> String {
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
 /// 「[Opus 5.5] An Error laye makes itself, where laye is where it broke: what was not done,」
 /// 「[Opus 5.5] and what was said of it.」
+#[track_caller]
 fn made(status: u16, title: String, why: String) -> Error {
-    let at = chrono::Utc::now();
-    Error {
-        id: format!("laye-{}", at.timestamp_millis()),
-        severity: if status >= 500 && status != 503 {
-            sacred_error::Severity::Error
-        } else {
-            sacred_error::Severity::Warn
-        },
-        context: sacred_error::Context {
-            surface: "collected".into(),
-            region: None,
-            anchor: None,
-        },
-        title,
-        why,
-        trace: Vec::new(),
-        raw: None,
-        at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        source: Some("laye".into()),
-        ffi_call: None,
-        location: None,
-        js_stack: None,
-        raw_stderr: None,
-        requires_reload: false,
-    }
+    let severity = if status >= 500 && status != 503 {
+        sacred_error::Severity::Error
+    } else {
+        sacred_error::Severity::Warn
+    };
+    HERE.make(sacred_error::What::new(severity, "collected", title, why))
 }
 
 /// 「[Opus 5.5] The Error as the answer's body.」
 fn answer_of(failure: &Error) -> serde_json::Value {
     serde_json::to_value(failure).unwrap_or_else(|e| {
-        serde_json::json!({ "title": failure.title, "why": format!("{} (the Error did not encode: {e})", failure.why) })
+        serde_json::json!({ "title": failure.title(), "why": format!("{} (the Error did not encode: {e})", failure.why()), "raw": format!("{failure:?}") })
     })
 }
 
 /// "it means threaded through"
 /// "each step in the thread should only say their thing, nothing more"
-/// 「[Opus 5.5] What QNTX answered, passed on as it came with laye's one line. An answer that」
-/// 「[Opus 5.5] is no Error becomes one here, once, its words kept whole as its raw.」
-fn received_and_passed(status: u16, answered: &str, hop: String) -> Error {
-    let received = match serde_json::from_str::<Error>(answered) {
-        Ok(failure) if !failure.title.is_empty() => failure,
-        _ => {
-            let mut once = made(
-                status,
-                format!("QNTX answered {status} with no Error"),
-                String::new(),
-            );
-            once.raw = Some(answered.to_string());
-            once
-        }
-    };
-    received.pass(hop)
+/// 「[Fable 5.2] What `asked` answered is received as it was made and passed on with」
+/// 「[Fable 5.2] laye's one line. This is every hop: receive, pass, write.」
+#[track_caller]
+fn received_and_passed(asked: &str, answered: &str, hop: String) -> Error {
+    HERE.receive(asked, answered).pass(hop)
 }
 
 /// 「[Opus 5.5] laye's own refusals, made where laye refuses.」
@@ -2878,32 +2856,39 @@ mod tests {
     }
 
     // "each step in the thread should only say their thing, nothing more"
-    // 「[Opus 5.5] What QNTX answered leaves laye as it came, with laye's one line alone.」
+    // 「[Fable 5.2] What QNTX answered leaves laye as it came, with laye's one line alone:」
+    // 「[Fable 5.2] the test every hop has.」
     #[test]
     fn what_qntx_answered_is_passed_on_with_layes_line_alone() {
-        let received = made(
+        let came = made(
             403,
             "the line was refused".into(),
             "not allowed, path".into(),
         )
         .pass("carried the reach line to kapteyn");
-        let answered = answer_of(&received).to_string();
         let out = received_and_passed(
-            403,
-            &answered,
+            "QNTX /auth/laye/reach",
+            &answer_of(&came).to_string(),
             "laye asked QNTX to do what google:1 approved".into(),
         );
-        let mut want = received.clone();
-        want.trace
-            .push("laye asked QNTX to do what google:1 approved".into());
+        let want = came.pass("laye asked QNTX to do what google:1 approved");
         assert_eq!(answer_of(&out), answer_of(&want));
     }
 
-    // 「[Opus 5.5] An answer that is no Error becomes one at laye, once, kept whole.」
+    // 「[Fable 5.2] An answer that is no Error is laye's finding, with the answer kept whole.」
     #[test]
-    fn an_answer_that_is_no_error_is_kept_whole() {
-        let out = received_and_passed(502, "<html>Bad gateway</html>", "laye asked QNTX".into());
-        assert_eq!(out.raw.as_deref(), Some("<html>Bad gateway</html>"));
-        assert_eq!(out.trace, vec!["laye asked QNTX"]);
+    fn an_answer_that_is_no_error_is_layes_finding() {
+        let out = received_and_passed(
+            "QNTX /auth/laye/reach",
+            "<html>Bad gateway</html>",
+            "laye asked QNTX".into(),
+        );
+        assert_eq!(
+            out.title(),
+            "QNTX /auth/laye/reach did not answer with an Error"
+        );
+        assert_eq!(out.raw(), Some("<html>Bad gateway</html>"));
+        assert_eq!(out.source(), Some("laye"));
+        assert_eq!(out.trace(), ["laye asked QNTX"]);
     }
 }

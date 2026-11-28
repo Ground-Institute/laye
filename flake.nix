@@ -25,7 +25,7 @@
           src = self;
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes."sacred-error-0.1.0" = "sha256-I+Kqoc0KX+V+N3tEuagotMrz4h6F5WhC8XeGLaRzl+s=";
+            outputHashes."sacred-error-0.1.0" = "sha256-pB2wsHoU6RhnwzONEbXqrgbn43Cg4vU2iaI8Uvq6RPs=";
           };
           cargoBuildFlags = [ "-p" "laye-peer" ];
           cargoTestFlags = [ "-p" "laye-peer" ];
@@ -37,7 +37,7 @@
           src = self;
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes."sacred-error-0.1.0" = "sha256-I+Kqoc0KX+V+N3tEuagotMrz4h6F5WhC8XeGLaRzl+s=";
+            outputHashes."sacred-error-0.1.0" = "sha256-pB2wsHoU6RhnwzONEbXqrgbn43Cg4vU2iaI8Uvq6RPs=";
           };
           cargoBuildFlags = [ "-p" "laye-front" ];
           cargoTestFlags = [ "-p" "laye-front" ];
@@ -58,7 +58,7 @@
           src = self;
           cargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes."sacred-error-0.1.0" = "sha256-I+Kqoc0KX+V+N3tEuagotMrz4h6F5WhC8XeGLaRzl+s=";
+            outputHashes."sacred-error-0.1.0" = "sha256-pB2wsHoU6RhnwzONEbXqrgbn43Cg4vU2iaI8Uvq6RPs=";
           };
           nativeBuildInputs = [ pkgs.wasm-bindgen-cli_0_2_121 pkgs.lld ];
           buildPhase = ''
