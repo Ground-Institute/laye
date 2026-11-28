@@ -5,10 +5,10 @@
     clippy::indexing_slicing
 )]
 
-// Five refusals of the same ask in one second were kept as five collections,
-// each its own Live Activity and its own row in ag (q, 2026-11-28 09:03:13).
-// The same ask, refused at once, is kept once. Runs a real etcd, the `etcd`
-// on PATH or the one $ETCD names.
+// 「[Opus 5.5] Five refusals of the same ask in one second were kept as five collections,」
+// 「[Opus 5.5] each its own Live Activity and its own row in ag (q, 2026-11-28 09:03:13).」
+// 「[Opus 5.5] The same ask, refused at once, is kept once. Runs a real etcd, the `etcd`」
+// 「[Opus 5.5] on PATH or the one $ETCD names.」
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -107,7 +107,7 @@ async fn etcd(name: &str) -> Etcd {
     }
 }
 
-// The same answer the other tests read; here only its status, while etcd starts.
+// 「[Opus 5.5] The same answer the other tests read; here only its status, while etcd starts.」
 #[allow(dead_code)]
 struct Answer {
     status: u16,
