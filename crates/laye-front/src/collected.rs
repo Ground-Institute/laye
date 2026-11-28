@@ -596,8 +596,8 @@ impl Collections<'_> {
                 held.id = ask.id();
                 key = self.key(asker_did, &held.id);
             }
-            // Whether it waits is read again from what the write is guarded
-            // by: another may have put it since the look above.
+            // 「[Opus 5.5] Whether it waits is read again from what the write is guarded」
+            // 「[Opus 5.5] by: another may have put it since the look above.」
             if held.waiting.iter().any(|s| ask.waits_in(s)) {
                 return Ok(false);
             }
