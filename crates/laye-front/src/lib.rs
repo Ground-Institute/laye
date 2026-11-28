@@ -1045,7 +1045,7 @@ async fn reach_approved(
             return Err((
                 status.as_u16(),
                 format!("{line} was not done on {shown_peer}"),
-                format!("{status} {answered}"),
+                format!("{status}: {}", peer_said(&answered).0),
                 vec![
                     format!("{person} approved it at laye"),
                     format!(
@@ -1053,7 +1053,10 @@ async fn reach_approved(
                         inner.config.qntx
                     ),
                     format!("{shown_peer} answered {status}"),
-                ],
+                ]
+                .into_iter()
+                .chain(peer_said(&answered).1)
+                .collect(),
             ));
         }
         eprintln!("laye-front: {person} approved {line} on {shown_peer}, and it is done");
@@ -1124,6 +1127,30 @@ fn shown(
             serde_json::json!({ "title": failure.title, "why": format!("{} (the Error did not encode: {e})", failure.why) }),
         ),
     }
+}
+
+/// "it means threaded through"
+/// 「[Opus 5.5] What a peer answered, read and not pasted: sacred-error's Error gives its」
+/// 「[Opus 5.5] title and why and its own trace, QNTX's older answer its sentence and the id」
+/// 「[Opus 5.5] it is kept under there, and anything else is its own words, whole.」
+fn peer_said(answered: &str) -> (String, Vec<String>) {
+    if let Ok(failure) = serde_json::from_str::<Error>(answered) {
+        let said = if failure.why.is_empty() {
+            failure.title
+        } else {
+            format!("{}: {}", failure.title, failure.why)
+        };
+        return (said, failure.trace);
+    }
+    if let Ok(older) = serde_json::from_str::<serde_json::Value>(answered)
+        && let Some(sentence) = older.get("error").and_then(|e| e.as_str())
+    {
+        return match older.get("id").and_then(|i| i.as_str()) {
+            Some(id) => (format!("{sentence} ({id})"), Vec::new()),
+            None => (sentence.to_string(), Vec::new()),
+        };
+    }
+    (answered.trim().to_string(), Vec::new())
 }
 
 /// 「[Opus 5.5] The peer as what is approved names it ("… on kapteyn, for …"), else its did.」
@@ -2918,5 +2945,15 @@ mod tests {
             peer_as_said("admit the key", "did:key:z6MkK"),
             "did:key:z6MkK"
         );
+    }
+
+    #[test]
+    fn what_a_peer_answered_is_read_not_pasted() {
+        let older = r#"{"id":"ERR-1","error":"http:vault:list: no plugin's route","timestamp":1}"#;
+        assert_eq!(
+            peer_said(older).0,
+            "http:vault:list: no plugin's route (ERR-1)"
+        );
+        assert_eq!(peer_said("the store is gone\n").0, "the store is gone");
     }
 }
