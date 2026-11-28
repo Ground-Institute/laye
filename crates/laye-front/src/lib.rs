@@ -955,11 +955,11 @@ async fn reach_approved(
     did: &str,
     ids: &[String],
     person: &str,
-) -> Result<(), (u16, String, String)> {
+) -> Result<(), (u16, String, String, Vec<String>)> {
     let all = held
         .all()
         .await
-        .map_err(|why| (502, "what waits was not read".to_string(), why))?;
+        .map_err(|why| (502, "what waits was not read".to_string(), why, vec![]))?;
     for one in all
         .into_iter()
         .filter(|c| c.did == did)
@@ -1002,17 +1002,32 @@ async fn reach_approved(
                 label: "laye".into(),
             },
         )
-        .map_err(|e| (500, "the ask was not signed".to_string(), e.to_string()))?;
+        .map_err(|e| {
+            (
+                500,
+                "the ask was not signed".to_string(),
+                e.to_string(),
+                vec![],
+            )
+        })?;
         let req = Request::post(format!("{}{path}", inner.config.qntx))
             .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
             .header(hyper::header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(asked.to_string())))
-            .map_err(|e| (500, "the ask was not made".to_string(), e.to_string()))?;
+            .map_err(|e| {
+                (
+                    500,
+                    "the ask was not made".to_string(),
+                    e.to_string(),
+                    vec![],
+                )
+            })?;
         let resp = inner.client.request(req).await.map_err(|e| {
             (
                 502,
                 format!("{line} was not asked of {peer}"),
                 format!("QNTX did not answer: {e}"),
+                vec![format!("laye asked QNTX {}{path}", inner.config.qntx)],
             )
         })?;
         let status = resp.status();
@@ -1023,10 +1038,20 @@ async fn reach_approved(
             .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
             .unwrap_or_default();
         if !approved_is_done(path, status) {
+            // "it means threaded through"
+            // 「[Opus 5.5] The way it went, hop by hop, so where it broke is seen at once.」
             return Err((
                 status.as_u16(),
                 format!("{line} was not done on {peer}"),
                 format!("{status} {answered}"),
+                vec![
+                    format!("{person} approved it at laye"),
+                    format!(
+                        "laye asked QNTX {}{path} to do it on {peer}",
+                        inner.config.qntx
+                    ),
+                    format!("{peer} answered {status}"),
+                ],
             ));
         }
         eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
@@ -1046,6 +1071,7 @@ async fn reach_approved(
                 502,
                 format!("{line} is done, and it was not written down"),
                 why,
+                vec![],
             )
         })?;
     }
@@ -1057,7 +1083,13 @@ async fn reach_approved(
 /// 「[Opus 5.5] What a person is answered with when what they did is not done: sacred-error's」
 /// 「[Opus 5.5] Error, its title what was not done and where, its why what was said of it,」
 /// 「[Opus 5.5] under the status that says which.」
-fn shown(status: u16, surface: &str, title: String, why: String) -> (u16, serde_json::Value) {
+fn shown(
+    status: u16,
+    surface: &str,
+    title: String,
+    why: String,
+    trace: Vec<String>,
+) -> (u16, serde_json::Value) {
     let at = chrono::Utc::now();
     let failure = Error {
         id: format!("laye-{}", at.timestamp_millis()),
@@ -1073,7 +1105,7 @@ fn shown(status: u16, surface: &str, title: String, why: String) -> (u16, serde_
         },
         title,
         why,
-        trace: Vec::new(),
+        trace,
         raw: None,
         at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
         source: Some("laye".into()),
@@ -1134,7 +1166,7 @@ async fn act_on(
         #[serde(default)]
         id: Option<String>,
     }
-    let refused = |status: u16, why: String| shown(status, "collected", why, String::new());
+    let refused = |status: u16, why: String| shown(status, "collected", why, String::new(), vec![]);
     let asked: Asked = match serde_json::from_slice(body) {
         Ok(asked) => asked,
         Err(e) => return refused(400, format!("an act is {{\"did\", \"act\"}}: {e}")),
@@ -1176,10 +1208,10 @@ async fn act_on(
     // A reach line asked for is written before what waits is released: the
     // asker hears that it was written, or nothing is released.
     if let collected::Act::Release { ids, .. } = &act
-        && let Err((status, title, why)) =
+        && let Err((status, title, why, trace)) =
             reach_approved(inner, held, &asked.did, ids, person).await
     {
-        return shown(status, "collected", title, why);
+        return shown(status, "collected", title, why, trace);
     }
     let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
     match held.act(&asked.did, collection, &act, person, now()).await {
@@ -2847,11 +2879,18 @@ mod tests {
             "collected",
             "REACH is 'http:vault:list' of SUPER was not done on kapteyn".into(),
             "403 Forbidden {\"why\":\"not_allowed\"}".into(),
+            vec!["kapteyn answered 403 Forbidden".into()],
         );
         assert_eq!(status, 403, "the peer's refusal is no gateway failing");
-        let failure: Error = serde_json::from_value(body).unwrap();
-        assert_eq!(failure.title, "REACH is 'http:vault:list' of SUPER was not done on kapteyn");
+        let read: Result<Error, _> = serde_json::from_value(body);
+        assert!(read.is_ok(), "the answer is no Error: {read:?}");
+        let Ok(failure) = read else { return };
+        assert_eq!(
+            failure.title,
+            "REACH is 'http:vault:list' of SUPER was not done on kapteyn"
+        );
         assert!(failure.why.contains("not_allowed"));
         assert_eq!(failure.context.surface, "collected");
+        assert_eq!(failure.trace, vec!["kapteyn answered 403 Forbidden"]);
     }
 }
