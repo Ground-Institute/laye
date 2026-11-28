@@ -1,4 +1,4 @@
-//! laye-p2p's Errors: its origin, and the buffer the overlay drains.
+//! 「[Fable 5.2] laye-p2p's Errors: its origin, and the buffer the overlay drains.」
 //!
 //! "each adding things only they can now"
 //! 「[Fable 5.2] An Error is made by `HERE`, laye-p2p's origin in sacred-error, which」
@@ -55,7 +55,7 @@ pub fn clear() {
     BUFFER.with(|b| b.borrow_mut().clear());
 }
 
-/// What broke at a laye boundary, made where it broke.
+/// 「[Fable 5.2] What broke at a laye boundary, made where it broke.」
 #[track_caller]
 pub fn build(
     severity: Severity,
@@ -69,7 +69,7 @@ pub fn build(
     HERE.make(what)
 }
 
-/// The panic hook makes this: the panic's own location, not the hook's.
+/// 「[Fable 5.2] The panic hook makes this: the panic's own location, not the hook's.」
 pub fn build_panic(location: Option<String>, message: String, raw_stderr: Option<String>) -> Error {
     let mut what = What::new(Severity::Panic, "laye-p2p", "laye-p2p panicked", message);
     what.context.region = Some("wasm-panic".to_string());
