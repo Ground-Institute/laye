@@ -943,14 +943,23 @@ const ADMIT_ON_PEER: &str = "/auth/laye/admit";
 /// Writes each reach line, and admits each key, among what is released, as
 /// the person who released it, through the primary. Each one done says so in
 /// what is delivered; one that is not stops the release, with why.
+///
+/// "why isnt it threaded through"
+/// 「[Opus 5.5] One that is not done comes back with the status the node gave it: its」
+/// 「[Opus 5.5] refusal is the node's answer, and reaches the person as the node said it.」
+/// 「[Opus 5.5] 502 is only for a node that did not answer at all: a 502 is what」
+/// 「[Opus 5.5] Cloudflare puts its own page over, and the node's words were lost under it.」
 async fn reach_approved(
     inner: &Inner,
     held: &collected::Collections<'_>,
     did: &str,
     ids: &[String],
     person: &str,
-) -> Result<(), String> {
-    let all = held.all().await?;
+) -> Result<(), (u16, String, String)> {
+    let all = held
+        .all()
+        .await
+        .map_err(|why| (502, "what waits was not read".to_string(), why))?;
     for one in all
         .into_iter()
         .filter(|c| c.did == did)
@@ -993,17 +1002,19 @@ async fn reach_approved(
                 label: "laye".into(),
             },
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| (500, "the ask was not signed".to_string(), e.to_string()))?;
         let req = Request::post(format!("{}{path}", inner.config.qntx))
             .header(hyper::header::AUTHORIZATION, format!("Signed {signed}"))
             .header(hyper::header::CONTENT_TYPE, "application/json")
             .body(Full::new(Bytes::from(asked.to_string())))
-            .map_err(|e| e.to_string())?;
-        let resp = inner
-            .client
-            .request(req)
-            .await
-            .map_err(|e| format!("QNTX did not answer: {e}"))?;
+            .map_err(|e| (500, "the ask was not made".to_string(), e.to_string()))?;
+        let resp = inner.client.request(req).await.map_err(|e| {
+            (
+                502,
+                format!("{line} was not asked of {peer}"),
+                format!("QNTX did not answer: {e}"),
+            )
+        })?;
         let status = resp.status();
         let answered = resp
             .into_body()
@@ -1012,8 +1023,10 @@ async fn reach_approved(
             .map(|b| String::from_utf8_lossy(&b.to_bytes()).into_owned())
             .unwrap_or_default();
         if !approved_is_done(path, status) {
-            return Err(format!(
-                "{line} was not done on {peer}: {status} {answered}"
+            return Err((
+                status.as_u16(),
+                format!("{line} was not done on {peer}"),
+                format!("{status} {answered}"),
             ));
         }
         eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
@@ -1027,16 +1040,63 @@ async fn reach_approved(
             person,
             now(),
         )
-        .await?;
+        .await
+        .map_err(|why| {
+            (
+                502,
+                format!("{line} is done, and it was not written down"),
+                why,
+            )
+        })?;
     }
     Ok(())
 }
 
-/// Whether what the node answered an approve with means it is done. A key
-/// the peer already holds is done: QNTX answers its admit 409, and nothing
-/// else (server/auth/admit.go). The same admit approved on each of its
-/// duplicates was answered 409 after the first was done (q, 2026-11-28
-/// 10:36:24), and laye called it a failure.
+// "and what get's sent to sentry or anything else , is the user experience of an error,"
+// "something that makes it easy for us to see and fix, because the experience being bad is immediatly clear and why"
+/// 「[Opus 5.5] What a person is answered with when what they did is not done: sacred-error's」
+/// 「[Opus 5.5] Error, its title what was not done and where, its why what was said of it,」
+/// 「[Opus 5.5] under the status that says which.」
+fn shown(status: u16, surface: &str, title: String, why: String) -> (u16, serde_json::Value) {
+    let at = chrono::Utc::now();
+    let failure = Error {
+        id: format!("laye-{}", at.timestamp_millis()),
+        severity: if status >= 500 && status != 503 {
+            sacred_error::Severity::Error
+        } else {
+            sacred_error::Severity::Warn
+        },
+        context: sacred_error::Context {
+            surface: surface.into(),
+            region: None,
+            anchor: None,
+        },
+        title,
+        why,
+        trace: Vec::new(),
+        raw: None,
+        at: at.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        source: Some("laye".into()),
+        ffi_call: None,
+        location: None,
+        js_stack: None,
+        raw_stderr: None,
+        requires_reload: false,
+    };
+    match serde_json::to_value(&failure) {
+        Ok(body) => (status, body),
+        Err(e) => (
+            status,
+            serde_json::json!({ "title": failure.title, "why": format!("{} (the Error did not encode: {e})", failure.why) }),
+        ),
+    }
+}
+
+/// 「[Opus 5.5] Whether what the node answered an approve with means it is done. A key」
+/// 「[Opus 5.5] the peer already holds is done: QNTX answers its admit 409, and nothing」
+/// 「[Opus 5.5] else (server/auth/admit.go). The same admit approved on each of its」
+/// 「[Opus 5.5] duplicates was answered 409 after the first was done (q, 2026-11-28」
+/// 「[Opus 5.5] 10:36:24), and laye called it a failure.」
 fn approved_is_done(path: &str, status: StatusCode) -> bool {
     status.is_success() || (path == ADMIT_ON_PEER && status == StatusCode::CONFLICT)
 }
@@ -1074,7 +1134,7 @@ async fn act_on(
         #[serde(default)]
         id: Option<String>,
     }
-    let refused = |status: u16, why: String| (status, serde_json::json!({ "error": why }));
+    let refused = |status: u16, why: String| shown(status, "collected", why, String::new());
     let asked: Asked = match serde_json::from_slice(body) {
         Ok(asked) => asked,
         Err(e) => return refused(400, format!("an act is {{\"did\", \"act\"}}: {e}")),
@@ -1116,9 +1176,10 @@ async fn act_on(
     // A reach line asked for is written before what waits is released: the
     // asker hears that it was written, or nothing is released.
     if let collected::Act::Release { ids, .. } = &act
-        && let Err(why) = reach_approved(inner, held, &asked.did, ids, person).await
+        && let Err((status, title, why)) =
+            reach_approved(inner, held, &asked.did, ids, person).await
     {
-        return refused(502, why);
+        return shown(status, "collected", title, why);
     }
     let collection = asked.collection.as_deref().filter(|c| !c.is_empty());
     match held.act(&asked.did, collection, &act, person, now()).await {
@@ -2774,5 +2835,23 @@ mod tests {
         assert!(approved_is_done(ADMIT_ON_PEER, StatusCode::CONFLICT));
         assert!(!approved_is_done(ADMIT_ON_PEER, StatusCode::BAD_REQUEST));
         assert!(!approved_is_done(REACH_ON_PEER, StatusCode::CONFLICT));
+    }
+
+    // "why isnt it threaded through"
+    // 「[Opus 5.5] What the peer refused reaches the person under the peer's status, as」
+    // 「[Opus 5.5] sacred-error's Error: what was not done and where, and what was said of it.」
+    #[test]
+    fn a_refused_approval_is_answered_as_the_error_the_peer_said() {
+        let (status, body) = shown(
+            403,
+            "collected",
+            "REACH is 'http:vault:list' of SUPER was not done on kapteyn".into(),
+            "403 Forbidden {\"why\":\"not_allowed\"}".into(),
+        );
+        assert_eq!(status, 403, "the peer's refusal is no gateway failing");
+        let failure: Error = serde_json::from_value(body).unwrap();
+        assert_eq!(failure.title, "REACH is 'http:vault:list' of SUPER was not done on kapteyn");
+        assert!(failure.why.contains("not_allowed"));
+        assert_eq!(failure.context.surface, "collected");
     }
 }
