@@ -141,8 +141,8 @@ impl Ask {
         }
     }
 
-    /// What names the collection this ask begins: the node that asks it and
-    /// what it asks, the same for the same ask.
+    /// 「[Opus 5.5] What names the collection this ask begins: the node that asks it and」
+    /// 「[Opus 5.5] what it asks, the same for the same ask.」
     pub fn id(&self) -> String {
         let sum = Sha256::digest(format!("{}\n{}", self.peer(), self.line()).as_bytes());
         sum.iter().take(8).map(|b| format!("{b:02x}")).collect()
@@ -589,9 +589,9 @@ impl Collections<'_> {
                 return Ok(false);
             }
             let (mut held, mut key, revision) = self.said_into(asker_did, ask.peer(), node).await?;
-            // A collection the ask begins is named by the ask, not by chance:
-            // refusals of the same ask at once all begin the same one, one of
-            // them puts it, and the others find it waiting.
+            // 「[Opus 5.5] A collection the ask begins is named by the ask, not by chance:」
+            // 「[Opus 5.5] refusals of the same ask at once all begin the same one, one of」
+            // 「[Opus 5.5] them puts it, and the others find it waiting.」
             if revision == 0 {
                 held.id = ask.id();
                 key = self.key(asker_did, &held.id);
