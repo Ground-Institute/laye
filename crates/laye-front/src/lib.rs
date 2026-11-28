@@ -1032,11 +1032,11 @@ async fn reach_approved(
     Ok(())
 }
 
-/// Whether what the node answered an approve with means it is done. A key
-/// the peer already holds is done: QNTX answers its admit 409, and nothing
-/// else (server/auth/admit.go). The same admit approved on each of its
-/// duplicates was answered 409 after the first was done (q, 2026-11-28
-/// 10:36:24), and laye called it a failure.
+/// 「[Opus 5.5] Whether what the node answered an approve with means it is done. A key」
+/// 「[Opus 5.5] the peer already holds is done: QNTX answers its admit 409, and nothing」
+/// 「[Opus 5.5] else (server/auth/admit.go). The same admit approved on each of its」
+/// 「[Opus 5.5] duplicates was answered 409 after the first was done (q, 2026-11-28」
+/// 「[Opus 5.5] 10:36:24), and laye called it a failure.」
 fn approved_is_done(path: &str, status: StatusCode) -> bool {
     status.is_success() || (path == ADMIT_ON_PEER && status == StatusCode::CONFLICT)
 }
