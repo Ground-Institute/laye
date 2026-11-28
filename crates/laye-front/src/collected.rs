@@ -114,11 +114,11 @@ pub struct Admit {
 }
 
 impl Admit {
-    /// What the key is admitted as on the node: what it calls itself, or,
-    /// where it said nothing, its did:key. A node admits no key without a
-    /// name (QNTX server/auth/laye_admit.go), and an approve of one that said
-    /// nothing was refused (q, 2026-11-28 09:03:34, 400 "person, peer, did
-    /// and label are each named").
+    /// 「[Opus 5.5] What the key is admitted as on the node: what it calls itself, or,」
+    /// 「[Opus 5.5] where it said nothing, its did:key. A node admits no key without a」
+    /// 「[Opus 5.5] name (QNTX server/auth/laye_admit.go), and an approve of one that said」
+    /// 「[Opus 5.5] nothing was refused (q, 2026-11-28 09:03:34, 400 "person, peer, did」
+    /// 「[Opus 5.5] and label are each named").」
     pub fn named(&self) -> &str {
         if self.label.trim().is_empty() {
             &self.did
