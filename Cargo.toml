@@ -30,7 +30,7 @@ indexing_slicing = "deny"
 string_slice = "deny"
 
 [workspace.dependencies]
-sacred-error = { git = "https://github.com/teranos/sacred-error", rev = "a71a5150d9766e163ba9a0481da33dc3f1debbeb" }
+sacred-error = { git = "https://github.com/teranos/sacred-error", rev = "d8834c0089eb56c6ad0aae78b1d0406a2ca7011a" }
 thiserror = "2"
 
 # The scene a phone downloads before it shows anything: small over fast.

@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use laye_net::{Keypair, Net, NetConfig, NetDrive, NetError, Topic};
-use sacred_error::{Context, Error, Severity};
+use sacred_error::{Error, Origin, Severity, What};
 
 /// What a laye peer says it speaks when another identifies it.
 pub const IDENTIFY: &str = "/laye/1.0.0";
@@ -163,33 +163,25 @@ fn write_owner_only(path: &Path, _bytes: &[u8]) -> std::io::Result<()> {
     ))
 }
 
-/// A failure at laye-peer's boundary, in sacred-error's shape.
-pub fn error(region: &str, title: &str, why: impl Into<String>) -> Box<Error> {
+// "each adding things only they can now"
+/// 「[Fable 5.2] laye-peer, as the layer that makes Errors. Its clock is the system's;」
+/// 「[Fable 5.2] a clock set before 1970 gives no time, and none is invented.」
+static HERE: Origin = Origin::new("laye-peer", now);
+
+fn now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    let ms = SystemTime::now()
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    Box::new(Error {
-        id: format!("err-laye-peer-{ms}"),
-        severity: Severity::Error,
-        context: Context {
-            surface: "laye-peer".into(),
-            region: Some(region.into()),
-            anchor: None,
-        },
-        title: title.into(),
-        why: why.into(),
-        trace: Vec::new(),
-        raw: None,
-        at: ms.to_string(),
-        source: Some("rust".into()),
-        ffi_call: None,
-        location: None,
-        js_stack: None,
-        raw_stderr: None,
-        requires_reload: false,
-    })
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_default()
+}
+
+/// 「[Fable 5.2] A failure at laye-peer's boundary, made where it broke.」
+#[track_caller]
+pub fn error(region: &str, title: &str, why: impl Into<String>) -> Box<Error> {
+    let mut what = What::new(Severity::Error, "laye-peer", title, why);
+    what.context.region = Some(region.into());
+    Box::new(HERE.make(what))
 }
 
 #[cfg(test)]
@@ -256,7 +248,7 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("nothing-here"), &path).unwrap();
 
         let e = key_at(&path).err().unwrap();
-        assert_eq!(e.context.region.as_deref(), Some("key-unreadable"));
+        assert_eq!(e.context().region.as_deref(), Some("key-unreadable"));
 
         // Nothing written beside the key is left behind.
         let left: Vec<_> = std::fs::read_dir(&dir).unwrap().collect();
@@ -288,7 +280,7 @@ mod tests {
         std::fs::write(&path, [0xff; 8]).unwrap();
 
         let e = key_at(&path).err().unwrap();
-        assert_eq!(e.context.region.as_deref(), Some("key-unreadable"));
+        assert_eq!(e.context().region.as_deref(), Some("key-unreadable"));
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
