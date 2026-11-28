@@ -969,7 +969,7 @@ async fn reach_approved(
             (
                 ADMIT_ON_PEER,
                 serde_json::json!({
-                    "person": person, "peer": admit.peer, "did": admit.did, "label": admit.label,
+                    "person": person, "peer": admit.peer, "did": admit.did, "label": admit.named(),
                 }),
                 admit.line(),
                 admit.peer.clone(),
