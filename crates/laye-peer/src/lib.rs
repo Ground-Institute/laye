@@ -176,7 +176,7 @@ fn now() -> String {
         .unwrap_or_default()
 }
 
-/// A failure at laye-peer's boundary, made where it broke.
+/// 「[Fable 5.2] A failure at laye-peer's boundary, made where it broke.」
 #[track_caller]
 pub fn error(region: &str, title: &str, why: impl Into<String>) -> Box<Error> {
     let mut what = What::new(Severity::Error, "laye-peer", title, why);
