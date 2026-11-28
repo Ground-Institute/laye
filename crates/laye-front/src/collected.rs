@@ -115,6 +115,19 @@ pub struct Admit {
 }
 
 impl Admit {
+    /// 「[Opus 5.5] What the key is admitted as on the node: what it calls itself, or,」
+    /// 「[Opus 5.5] where it said nothing, its did:key. A node admits no key without a」
+    /// 「[Opus 5.5] name (QNTX server/auth/laye_admit.go), and an approve of one that said」
+    /// 「[Opus 5.5] nothing was refused (q, 2026-11-28 09:03:34, 400 "person, peer, did」
+    /// 「[Opus 5.5] and label are each named").」
+    pub fn named(&self) -> &str {
+        if self.label.trim().is_empty() {
+            &self.did
+        } else {
+            &self.label
+        }
+    }
+
     /// What admitting it reads as.
     pub fn line(&self) -> String {
         if self.label.is_empty() {
@@ -1083,6 +1096,21 @@ mod asks {
     use super::*;
 
     // "CAN WE PLEASE STOP EXPECTING AN AGENT TO REQUEST IT OWN PERMISSIONS AND ALSO BE PERFECT?"
+    #[test]
+    fn a_key_that_said_no_name_is_admitted_by_its_did() {
+        let unnamed = Admit {
+            peer: "did:key:zK".into(),
+            did: "did:key:z6Mkgd5".into(),
+            label: " ".into(),
+        };
+        assert_eq!(unnamed.named(), "did:key:z6Mkgd5");
+        let named = Admit {
+            label: "ramen".into(),
+            ..unnamed
+        };
+        assert_eq!(named.named(), "ramen");
+    }
+
     #[test]
     fn a_key_to_admit_reads_as_itself_and_waits_on_the_person() {
         let admit = Admit {
