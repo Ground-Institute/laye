@@ -198,18 +198,25 @@ async fn the_same_ask_refused_at_once_is_kept_once() {
         etcd: &kv,
         laye: LAYE,
     };
-    let ask = Ask::Admit(Admit {
-        peer: KAPTEYN.into(),
-        did: ASKER.into(),
-        label: String::new(),
-    });
-    let put = futures::future::join_all(
-        (0..5).map(|_| held.lacked(&ask, "kapteyn", ASKER, "Keeper", PERSON, 1_764_320_593)),
-    )
-    .await;
-    let put: Vec<bool> = put.into_iter().map(|p| p.unwrap()).collect();
-    assert_eq!(put.iter().filter(|p| **p).count(), 1, "{put:?}");
+    for round in 0..10 {
+        let asker = format!("{ASKER}{round}");
+        let ask = Ask::Admit(Admit {
+            peer: KAPTEYN.into(),
+            did: asker.clone(),
+            label: String::new(),
+        });
+        let put = futures::future::join_all(
+            (0..20).map(|_| held.lacked(&ask, "kapteyn", &asker, "Keeper", PERSON, 1_764_320_593)),
+        )
+        .await;
+        let put: Vec<bool> = put.into_iter().map(|p| p.unwrap()).collect();
+        assert_eq!(
+            put.iter().filter(|p| **p).count(),
+            1,
+            "round {round}: {put:?}"
+        );
+    }
     let all = held.all().await.unwrap();
     let waiting: usize = all.iter().map(|c| c.waiting.len()).sum();
-    assert_eq!((all.len(), waiting), (1, 1));
+    assert_eq!((all.len(), waiting), (10, 10));
 }
