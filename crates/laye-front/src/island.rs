@@ -30,10 +30,10 @@ pub const TYPE: &str = "WaitsAttributes";
 /// (lib.rs, /api/laye/collected/<act>).
 pub const ACT: &str = "/api/laye/collected/";
 
-/// What `waits` names a person's one activity by: everything that waits on them.
+/// 「[Opus 5.5] What `waits` names a person's one activity by: everything that waits on them.」
 pub const ON: &str = "laye/waits-on/";
 
-/// The `waits` of the one activity of `person`.
+/// 「[Opus 5.5] The `waits` of the one activity of `person`.」
 pub fn waits_on(person: &str) -> String {
     format!("{ON}{person}")
 }
@@ -49,20 +49,20 @@ pub struct Stands {
     /// What it shows, marked, as laye last said it.
     #[serde(default)]
     pub shows: String,
-    /// When the app handed it, in seconds since 1970.
+    /// 「[Opus 5.5] When the app handed it, in seconds since 1970.」
     #[serde(default)]
     pub since: u64,
 }
 
 /// "Apple is saying max 8 hours per activity, we dont care, we keep it going
-/// by cancelling beofre it ends and starting again."
+/// 「[Opus 5.5] by cancelling beofre it ends and starting again."」
 ///
-/// How long one activity stands before laye starts the next for the same
-/// person on the same phone, short of Apple's eight hours. The one before
-/// ends once the next stands, so what waits is there the whole time.
+/// 「[Opus 5.5] How long one activity stands before laye starts the next for the same」
+/// 「[Opus 5.5] person on the same phone, short of Apple's eight hours. The one before」
+/// 「[Opus 5.5] ends once the next stands, so what waits is there the whole time.」
 pub const RENEW: u64 = 7 * 3600;
 
-/// Whether an activity that stood since `since` is to be followed by the next.
+/// 「[Opus 5.5] Whether an activity that stood since `since` is to be followed by the next.」
 pub fn renewed(since: u64, now: u64) -> bool {
     now.saturating_sub(since) >= RENEW
 }
@@ -123,7 +123,7 @@ pub async fn keep(
     held.etcd.txn(&[], vec![op]).await.map(|_| ())
 }
 
-/// What was said, as one line: its words, cut at `at_most` characters.
+/// 「[Opus 5.5] What was said, as one line: its words, cut at `at_most` characters.」
 fn line(said: &str, at_most: usize) -> String {
     let said: String = said.split_whitespace().collect::<Vec<_>>().join(" ");
     let cut: String = said.chars().take(at_most).collect();
@@ -134,8 +134,8 @@ fn line(said: &str, at_most: usize) -> String {
     }
 }
 
-/// What goes out next of what waits on a person: the one due first. One that
-/// is due at no time goes after every one that is.
+/// 「[Opus 5.5] What goes out next of what waits on a person: the one due first. One that」
+/// 「[Opus 5.5] is due at no time goes after every one that is.」
 pub fn lead<'a>(waiting: &[&'a Collected]) -> Option<&'a Collected> {
     waiting
         .iter()
@@ -149,9 +149,9 @@ pub fn lead<'a>(waiting: &[&'a Collected]) -> Option<&'a Collected> {
 
 /// "One activity, for you, holding everything that waits on you."
 ///
-/// What a person's one activity shows: what goes out next, as it was said;
-/// what waits after it, a line each, as many as are drawn and how many more;
-/// and the presses, on what goes out next.
+/// 「[Opus 5.5] What a person's one activity shows: what goes out next, as it was said;」
+/// 「[Opus 5.5] what waits after it, a line each, as many as are drawn and how many more;」
+/// 「[Opus 5.5] and the presses, on what goes out next.」
 pub fn shown(waiting: &[&Collected]) -> Option<serde_json::Value> {
     let lead = lead(waiting)?;
     let mut after: Vec<&Collected> = waiting
@@ -169,7 +169,7 @@ pub fn shown(waiting: &[&Collected]) -> Option<serde_json::Value> {
         .chain(after.iter().flat_map(|c| c.waiting.iter()));
     let says = line(&said.next()?.says, 160);
     let rest: Vec<String> = said.map(|one| line(&one.says, 90)).collect();
-    // The lock screen draws four lines of it.
+    // 「[Opus 5.5] The lock screen draws four lines of it.」
     let lines: Vec<String> = if rest.len() <= 4 {
         rest
     } else {
@@ -186,7 +186,7 @@ pub fn shown(waiting: &[&Collected]) -> Option<serde_json::Value> {
         })
     };
     // "SESSION CANT REACH, IT NEEDS REACH LINE(S), IT GETS IN FRONT OF MY VIA AG OR LIVE ACTIVITY AS SOMETHING TO APPROVE,"
-    // What goes out next is approvals alone: approve or deny, the thing itself.
+    // 「[Opus 5.5] What goes out next is approvals alone: approve or deny, the thing itself.」
     if lead.waiting.iter().all(|s| s.approval()) {
         return Some(serde_json::json!({
             "says": says,
@@ -254,7 +254,7 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
         Err(why) => return vec![why],
     };
 
-    // Everything that waits on each person.
+    // 「[Opus 5.5] Everything that waits on each person.」
     let mut on: Vec<(String, Vec<&Collected>)> = Vec::new();
     for c in all.iter().filter(|c| !c.waiting.is_empty()) {
         for person in people_shown(roots, held.person_of_agent(&c.did).await.ok()) {
@@ -265,8 +265,8 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
         }
     }
 
-    // Started on each of a person's phones where something waits on them and
-    // their one activity does not stand.
+    // 「[Opus 5.5] Started on each of a person's phones where something waits on them and」
+    // 「[Opus 5.5] their one activity does not stand.」
     for (person, waiting) in &on {
         let Some(state) = shown(waiting) else {
             continue;
@@ -289,8 +289,8 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
             {
                 continue;
             }
-            // Started once, until the app hands back the activity's own token,
-            // or until it is the next one's time.
+            // 「[Opus 5.5] Started once, until the app hands back the activity's own token,」
+            // 「[Opus 5.5] or until it is the next one's time.」
             let started = format!("{STARTED}{phone}/{person}");
             if let Ok(Some(kv)) = held.etcd.get(&started).await
                 && let Ok(at) = String::from_utf8_lossy(&kv.value).parse::<u64>()
@@ -341,14 +341,14 @@ pub async fn show(held: &Collections<'_>, apns: &Apns, roots: &[String], now: u6
         }
     }
 
-    // Moved where it changed, ended where nothing waits on its person. One
-    // that stands for a single collection, as laye started them before, ends.
+    // 「[Opus 5.5] Moved where it changed, ended where nothing waits on its person. One」
+    // 「[Opus 5.5] that stands for a single collection, as laye started them before, ends.」
     let all_stands: Vec<(String, u64, String)> = stands
         .iter()
         .map(|(_, s)| (s.waits.clone(), s.since, s.phone.clone()))
         .collect();
     for (token, mut stands) in stands {
-        // The next one stands on the same phone: this one is followed, and ends now.
+        // 「[Opus 5.5] The next one stands on the same phone: this one is followed, and ends now.」
         let followed = renewed(stands.since, now)
             && all_stands.iter().any(|(waits, since, phone)| {
                 *waits == stands.waits && *phone == stands.phone && *since > stands.since
