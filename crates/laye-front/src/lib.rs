@@ -989,6 +989,8 @@ async fn reach_approved(
         if !ids.is_empty() && !ids.contains(&one.id) {
             continue;
         }
+        // 「[Opus 5.5] The peer as the person was shown it, by name, never only its did:key.」
+        let shown_peer = peer_as_said(&one.says, &peer);
         let t = now();
         let signed = jwt::sign(
             &inner.key,
@@ -1025,7 +1027,7 @@ async fn reach_approved(
         let resp = inner.client.request(req).await.map_err(|e| {
             (
                 502,
-                format!("{line} was not asked of {peer}"),
+                format!("{line} was not asked of {shown_peer}"),
                 format!("QNTX did not answer: {e}"),
                 vec![format!("laye asked QNTX {}{path}", inner.config.qntx)],
             )
@@ -1042,25 +1044,25 @@ async fn reach_approved(
             // 「[Opus 5.5] The way it went, hop by hop, so where it broke is seen at once.」
             return Err((
                 status.as_u16(),
-                format!("{line} was not done on {peer}"),
+                format!("{line} was not done on {shown_peer}"),
                 format!("{status} {answered}"),
                 vec![
                     format!("{person} approved it at laye"),
                     format!(
-                        "laye asked QNTX {}{path} to do it on {peer}",
+                        "laye asked QNTX {}{path} to do it on {shown_peer}",
                         inner.config.qntx
                     ),
-                    format!("{peer} answered {status}"),
+                    format!("{shown_peer} answered {status}"),
                 ],
             ));
         }
-        eprintln!("laye-front: {person} approved {line} on {peer}, and it is done");
+        eprintln!("laye-front: {person} approved {line} on {shown_peer}, and it is done");
         held.act(
             did,
             None,
             &collected::Act::Edit {
                 id: one.id.clone(),
-                says: format!("{person} approved, and it is done on {peer}: {line}"),
+                says: format!("{person} approved, and it is done on {shown_peer}: {line}"),
             },
             person,
             now(),
@@ -1121,6 +1123,15 @@ fn shown(
             status,
             serde_json::json!({ "title": failure.title, "why": format!("{} (the Error did not encode: {e})", failure.why) }),
         ),
+    }
+}
+
+/// 「[Opus 5.5] The peer as what is approved names it ("… on kapteyn, for …"), else its did.」
+fn peer_as_said(says: &str, did: &str) -> String {
+    let before = says.split(", for ").next().unwrap_or(says);
+    match before.rsplit_once(" on ") {
+        Some((_, name)) if !name.trim().is_empty() => name.trim().to_string(),
+        _ => did.to_string(),
     }
 }
 
@@ -2892,5 +2903,20 @@ mod tests {
         assert!(failure.why.contains("not_allowed"));
         assert_eq!(failure.context.surface, "collected");
         assert_eq!(failure.trace, vec!["kapteyn answered 403 Forbidden"]);
+    }
+
+    #[test]
+    fn the_peer_is_named_as_the_person_was_shown_it() {
+        assert_eq!(
+            peer_as_said(
+                "REACH is 'http:vault:list' of SUPER on kapteyn, for did:key:z6MkKeeper",
+                "did:key:z6MkK"
+            ),
+            "kapteyn"
+        );
+        assert_eq!(
+            peer_as_said("admit the key", "did:key:z6MkK"),
+            "did:key:z6MkK"
+        );
     }
 }
